@@ -1,0 +1,12 @@
+apiVersion: mongodb.allianz.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: atlas-provider-aws-only
+spec:
+  credentials:
+    source: AWS
+    aws:
+      secretsManager:
+        region: eu-central-1
+        secretName: mongodb-crossplane/provider/atlas-credentials
+        kmsKeyId: arn:aws:kms:eu-central-1:198927051560:key/50aed21c-4e38-4e62-9907-f35911304563

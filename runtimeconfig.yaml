@@ -1,0 +1,40 @@
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: swap-provider-runtime
+spec:
+  deploymentTemplate:
+    metadata:
+      labels:
+        app: swap-provider-mongodb
+    spec:
+      selector:
+        matchLabels:
+          app: swap-provider-mongodb
+      template:
+        metadata:
+          labels:
+            app: swap-provider-mongodb
+        spec:
+          containers:
+          - name: package-runtime
+            image: index.docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.0
+            imagePullPolicy: IfNotPresent
+            env:
+              - name: AWS_DEFAULT_REGION
+                value: eu-central-1
+              - name: AWS_ACCESS_KEY_ID
+                valueFrom:
+                  secretKeyRef:
+                    name: aws-creds
+                    key: aws_access_key_id
+              - name: AWS_SECRET_ACCESS_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: aws-creds
+                    key: aws_secret_access_key
+              - name: AWS_SESSION_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: aws-creds
+                    key: aws_session_token

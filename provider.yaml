@@ -1,0 +1,8 @@
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: swap-provider-mongodb
+spec:
+  package: docker.io/svchaudharialliazn/swap-provider-mongodb:v0.1.1
+  runtimeConfigRef:
+    name: swap-provider-runtime

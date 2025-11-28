@@ -1,0 +1,7 @@
+apiVersion: meta.pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: swap-provider-mongodb
+spec:
+  controller:
+    image: docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.3
