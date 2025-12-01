@@ -53,7 +53,7 @@ vendor: ## Update go vendor dependencies
 	go mod verify
 
 .PHONY: generate
-generate: $(CONTROLLER_GEN) ## Generate code (deepcopy, CRDs, etc.)
+generate: #$(CONTROLLER_GEN) ## Generate code (deepcopy, CRDs, etc.)
 	@echo "Generating deepcopy methods..."
 	$(CONTROLLER_GEN) object:headerFile="./hack/boilerplate.go.txt" paths="./apis/..."
 	@echo "Generating CRDs..."

@@ -219,49 +219,100 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 	cr := mg.(*v1alpha1.Organization)
 	orgID := meta.GetExternalName(cr)
-	
+
 	if orgID == "" {
-		// No external resource ID, nothing to delete
+		c.logger.Debug("Delete called but externalName (orgID) is empty — no external delete API will be invoked")
 		return nil
 	}
 
-	c.logger.Debug("Starting organization deletion", "name", cr.Name, "orgID", orgID)
+	// Debug: Starting delete workflow
+	c.logger.Debug("Delete() invoked for Organization",
+		"orgID", orgID,
+		"name", cr.Name,
+		"finalizerPresent", meta.FinalizerExists(cr, FinalizerOrganizationCleanup),
+	)
 
-	// ADD: Step 1 - Add finalizer if not present
+	// ============================================================
+	// 1. Add finalizer if missing
+	// ============================================================
 	if !meta.FinalizerExists(cr, FinalizerOrganizationCleanup) {
+		c.logger.Debug("Finalizer missing — adding finalizer before delete", 
+			"orgID", orgID,
+		)
 		meta.AddFinalizer(cr, FinalizerOrganizationCleanup)
-		c.logger.Debug("Added deletion finalizer", "orgID", orgID)
-		return nil // Will retry next reconciliation
+		return nil
 	}
 
-	// ADD: Step 2 - Delete from external API
-	// MongoDB Atlas Delete API returns 404 for already-deleted resources
-	// This is safe to handle as success
+	// ============================================================
+	// 2. DEBUG: SHOW EXACT MONGODB ATLAS API CALL BEING TRIGGERED
+	// ============================================================
+	c.logger.Debug("Calling MongoDB Atlas API → DeleteOrganization()",
+		"api", "DELETE /api/atlas/v2/orgs/{orgId}",
+		"orgID", orgID,
+	)
+
 	err := c.client.DeleteOrganization(ctx, orgID)
-	
-	// ADD: Step 3 - Handle 404 as success (already deleted)
+
+	// 404 means already deleted
 	if svc.IsNotFoundError(err) {
-		c.logger.Debug("Organization already deleted in external system", "orgID", orgID)
+		c.logger.Debug("MongoDB Atlas API returned 404 — org already deleted",
+			"orgID", orgID,
+		)
+
+		// ============================================================
+		// AWS Secret Delete Debug
+		// ============================================================
+		secretName := finalSecretName(cr)
+		c.logger.Debug("Secret cleanup step: calling AWS DeleteSecret()",
+			"secretName", secretName,
+			"awsAPI", "DeleteSecret",
+		)
+		if delErr := c.awsClient.DeleteSecret(ctx, secretName, true); delErr != nil {
+			c.logger.Debug("AWS DeleteSecret failed",
+				"secretName", secretName,
+				"error", delErr,
+			)
+		}
+
 		meta.RemoveFinalizer(cr, FinalizerOrganizationCleanup)
-		// FIX: Use ReconcileSuccess() instead of Deleted()
 		cr.SetConditions(xpv1.ReconcileSuccess())
 		return nil
 	}
 
-	// ADD: Handle other errors
+	// Handle other failures
 	if err != nil {
-		// FIX: Use logging.WithValues() instead of .Error()
-		c.logger.WithValues("orgID", orgID, "error", err).Debug("Failed to delete organization")
-		// FIX: Use ReconcileError() instead of direct condition
+		c.logger.Debug("Atlas DeleteOrganization() returned error",
+			"orgID", orgID,
+			"error", err,
+		)
 		cr.SetConditions(xpv1.ReconcileError(err))
 		return errors.Wrap(err, errDeleteExternal)
 	}
 
-	// ADD: Step 4 - Remove finalizer on success
+	// ============================================================
+	// 3. SUCCESS — remove finalizer
+	// ============================================================
+	c.logger.Debug("MongoDB Atlas organization deleted successfully",
+		"orgID", orgID,
+	)
+
+	// ============================================================
+	// AWS Secret Delete Debug
+	// ============================================================
+	secretName := finalSecretName(cr)
+	c.logger.Debug("Secret cleanup step: calling AWS DeleteSecret()",
+		"secretName", secretName,
+		"awsAPI", "DeleteSecret",
+	)
+
+	if delErr := c.awsClient.DeleteSecret(ctx, secretName, true); delErr != nil {
+		c.logger.Debug("AWS DeleteSecret failed",
+			"secretName", secretName,
+			"error", delErr,
+		)
+	}
+
 	meta.RemoveFinalizer(cr, FinalizerOrganizationCleanup)
-	// FIX: Use ReconcileSuccess() instead of Deleted()
 	cr.SetConditions(xpv1.ReconcileSuccess())
-	c.logger.Debug("Organization deletion completed", "orgID", orgID)
-	
 	return nil
 }
