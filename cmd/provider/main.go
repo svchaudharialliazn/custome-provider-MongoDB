@@ -38,10 +38,10 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 
-	"github.com/svchaudhari/Swap-Provider-MongoDB/apis"
-	"github.com/svchaudhari/Swap-Provider-MongoDB/apis/v1alpha1"
-	gateway "github.com/svchaudhari/Swap-Provider-MongoDB/internal/controller"
-	"github.com/svchaudhari/Swap-Provider-MongoDB/internal/controller/features"
+	"github.com/svchaudharialliazn/swapnil-provider-mongodb/apis"
+	"github.com/svchaudharialliazn/swapnil-provider-mongodb/apis/v1alpha1"
+	gateway "github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/controller"
+	"github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/controller/features"
 )
 
 // UseISO8601 sets the logger to uses ISO8601 timestamp format

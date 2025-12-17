@@ -20,9 +20,9 @@ package apis
 import (
 	"k8s.io/apimachinery/pkg/runtime"
 
-	connectivityv1alpha1 "github.com/svchaudhari/Swap-Provider-MongoDB/apis/connectivity/v1alpha1"
-	organizationv1alpha1 "github.com/svchaudhari/Swap-Provider-MongoDB/apis/organization/v1alpha1"
-	providerv1alpha1 "github.com/svchaudhari/Swap-Provider-MongoDB/apis/v1alpha1"
+	connectivityv1alpha1 "github.com/svchaudharialliazn/swapnil-provider-mongodb/apis/connectivity/v1alpha1"
+	organizationv1alpha1 "github.com/svchaudharialliazn/swapnil-provider-mongodb/apis/organization/v1alpha1"
+	providerv1alpha1 "github.com/svchaudharialliazn/swapnil-provider-mongodb/apis/v1alpha1"
 )
 
 func init() {

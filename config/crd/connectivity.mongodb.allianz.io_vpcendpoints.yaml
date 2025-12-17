@@ -25,6 +25,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='Synced')].status
       name: SYNCED
       type: string
+    - jsonPath: .status.atProvider.state
+      name: STATE
+      type: string
     - jsonPath: .metadata.annotations.crossplane\.io/external-name
       name: EXTERNAL-NAME
       type: string
@@ -34,7 +37,8 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: A VPCEndpoint is an example API type.
+        description: A VPCEndpoint is a managed resource for AWS VPC Endpoints via
+          Crossplane.
         properties:
           apiVersion:
             description: |-
@@ -54,7 +58,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: A VPCEndpointSpec defines the desired state of a AWSPrivateLink.
+            description: A VPCEndpointSpec defines the desired state of a VPC Endpoint.
             properties:
               deletionPolicy:
                 default: Delete
@@ -72,15 +76,20 @@ spec:
                 type: string
               forProvider:
                 description: VPCEndpointParameters are the configurable fields of
-                  a AWSPrivateLink.
+                  a VPC Endpoint using AWS SDK.
                 properties:
                   accountId:
                     type: string
                   ipAddressType:
                     type: string
+                  policyDocument:
+                    type: string
+                  privateDnsEnabled:
+                    description: NEW AWS SDK specific fields
+                    type: boolean
                   region:
                     type: string
-                  securityIds:
+                  securityGroupIds:
                     items:
                       type: string
                     type: array
@@ -90,6 +99,10 @@ spec:
                     items:
                       type: string
                     type: array
+                  tagSpecifications:
+                    additionalProperties:
+                      type: string
+                    type: object
                   vpcEndpointType:
                     type: string
                   vpcId:
@@ -98,7 +111,7 @@ spec:
                 - accountId
                 - ipAddressType
                 - region
-                - securityIds
+                - securityGroupIds
                 - serviceName
                 - subnetIds
                 - vpcEndpointType
@@ -310,12 +323,41 @@ spec:
             - forProvider
             type: object
           status:
-            description: A VPCEndpointStatus represents the observed state of a AWSPrivateLink.
+            description: A VPCEndpointStatus represents the observed state of a VPC
+              Endpoint.
             properties:
               atProvider:
                 description: VPCEndpointObservation are the observable fields of a
-                  AWSPrivateLink.
+                  VPC Endpoint.
                 properties:
+                  creationTimestamp:
+                    type: string
+                  networkInterfaceIds:
+                    items:
+                      type: string
+                    type: array
+                  networkInterfaces:
+                    items:
+                      description: NetworkInterfaceObs represents Elastic Network
+                        Interface details for the VPC endpoint
+                      properties:
+                        networkInterfaceId:
+                          type: string
+                        privateIp:
+                          type: string
+                        status:
+                          type: string
+                        subnetId:
+                          type: string
+                      required:
+                      - networkInterfaceId
+                      - privateIp
+                      - status
+                      - subnetId
+                      type: object
+                    type: array
+                  privateDnsName:
+                    type: string
                   state:
                     type: string
                   vpcEndpointId:

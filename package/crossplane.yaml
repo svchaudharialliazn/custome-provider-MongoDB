@@ -4,7 +4,7 @@ metadata:
   name: provider-mongodb
   annotations:
     meta.crossplane.io/maintainer: IaC Platform team
-    meta.crossplane.io/source: github.com/svchaudhari/Swap-Provider-MongoDB/
+    meta.crossplane.io/source: github.com/svchaudharialliazn/swapnil-provider-mongodb/
     meta.crossplane.io/license: LICENSE
     meta.crossplane.io/description: |
       The App Gateway Crossplane provider adds support for

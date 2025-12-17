@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -22,11 +22,11 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 
-	"github.com/svchaudhari/Swap-Provider-MongoDB/apis/organization/v1alpha1"
-	apisv1alpha1 "github.com/svchaudhari/Swap-Provider-MongoDB/apis/v1alpha1"
-	svc "github.com/svchaudhari/Swap-Provider-MongoDB/internal/clients/mongodb"
-	awsclient "github.com/svchaudhari/Swap-Provider-MongoDB/internal/clients/aws"
-	"github.com/svchaudhari/Swap-Provider-MongoDB/internal/controller/features"
+	"github.com/svchaudharialliazn/swapnil-provider-mongodb/apis/organization/v1alpha1"
+	apisv1alpha1 "github.com/svchaudharialliazn/swapnil-provider-mongodb/apis/v1alpha1"
+	awsclient "github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/clients/aws"
+	svc "github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/clients/mongodb"
+	"github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/controller/features"
 )
 
 const (
@@ -211,8 +211,8 @@ func isAtlasTransientOrOpaqueDeleteErr(err error) bool {
 
 // Observe implements managed.ExternalClient Observe.
 // Behavior:
-//  - If external-name is set -> observe using that org id.
-//  - If external-name is empty -> try to find an existing org by name and adopt it (set external-name).
+//   - If external-name is set -> observe using that org id.
+//   - If external-name is empty -> try to find an existing org by name and adopt it (set external-name).
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
 	cr := mg.(*v1alpha1.Organization)
 	orgID := meta.GetExternalName(cr)
@@ -665,4 +665,3 @@ func (c *external) cleanupAWSSecretAfterDelete(
 	c.logger.Info("Organization fully deleted — finalizer(s) removed (if present)", "orgID", meta.GetExternalName(latest))
 	return nil
 }
-

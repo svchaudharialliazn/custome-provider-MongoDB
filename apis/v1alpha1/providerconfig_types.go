@@ -3,7 +3,9 @@ Copyright 2023 The Crossplane Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-    http://www.apache.org/licenses/LICENSE-2.0
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,9 +16,10 @@ package v1alpha1
 
 import (
 	"reflect"
+
+	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 )
 
 const (
@@ -37,9 +40,33 @@ type AWSCredentialsSource struct {
 }
 
 // ProviderCredentials holds credentials source details.
+// Supports both Kubernetes Secrets and AWS Secrets Manager.
 type ProviderCredentials struct {
+	// Source specifies which credentials source to use (Secret or AWS)
 	Source xpv1.CredentialsSource `json:"source"`
-	AWS    *AWSCredentialsSource  `json:"aws,omitempty"`
+
+	// SecretRef references a Kubernetes Secret containing AWS credentials
+	// Used when Source is "Secret"
+	// Example secret format:
+	//   apiVersion: v1
+	//   kind: Secret
+	//   metadata:
+	//     name: backupcreds
+	//     namespace: crossplane-system
+	//   type: Opaque
+	//   data:
+	//     credentials: <base64-encoded-json>
+	// Where credentials JSON contains:
+	//   {
+	//     "accessKeyId": "AKIA...",
+	//     "secretAccessKey": "...",
+	//     "sessionToken": "..."
+	//   }
+	SecretRef *xpv1.SecretKeySelector `json:"secretRef,omitempty"`
+
+	// AWS holds AWS Secrets Manager configuration
+	// Used when Source is "AWS"
+	AWS *AWSCredentialsSource `json:"aws,omitempty"`
 }
 
 // ProviderConfigSpec defines the desired state of ProviderConfig.

@@ -27,7 +27,7 @@ metadata:
       spec:
         package: docker.io/svchaudharialliazn/swap-provider-mongodb:v0.1.0
       ```
-    meta.crossplane.io/source: github.com/svchaudhari/Swap-Provider-MongoDB
+    meta.crossplane.io/source: github.com/svchaudharialliazn/swapnil-provider-mongodb
   creationTimestamp: null
   name: swap-provider-mongodb
 spec:

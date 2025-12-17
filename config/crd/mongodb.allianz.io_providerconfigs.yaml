@@ -43,11 +43,14 @@ spec:
             description: ProviderConfigSpec defines the desired state of ProviderConfig.
             properties:
               credentials:
-                description: ProviderCredentials holds credentials source details.
+                description: |-
+                  ProviderCredentials holds credentials source details.
+                  Supports both Kubernetes Secrets and AWS Secrets Manager.
                 properties:
                   aws:
-                    description: AWSCredentialsSource contains AWS credential source
-                      details.
+                    description: |-
+                      AWS holds AWS Secrets Manager configuration
+                      Used when Source is "AWS"
                     properties:
                       secretsManager:
                         description: AWSSecretsManagerReference holds configuration
@@ -65,10 +68,43 @@ spec:
                         - region
                         type: object
                     type: object
-                  source:
+                  secretRef:
                     description: |-
-                      A CredentialsSource is a source from which provider credentials may be
-                      acquired.
+                      SecretRef references a Kubernetes Secret containing AWS credentials
+                      Used when Source is "Secret"
+                      Example secret format:
+                        apiVersion: v1
+                        kind: Secret
+                        metadata:
+                          name: backupcreds
+                          namespace: crossplane-system
+                        type: Opaque
+                        data:
+                          credentials: <base64-encoded-json>
+                      Where credentials JSON contains:
+                        {
+                          "accessKeyId": "AKIA...",
+                          "secretAccessKey": "...",
+                          "sessionToken": "..."
+                        }
+                    properties:
+                      key:
+                        description: The key to select.
+                        type: string
+                      name:
+                        description: Name of the secret.
+                        type: string
+                      namespace:
+                        description: Namespace of the secret.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    - namespace
+                    type: object
+                  source:
+                    description: Source specifies which credentials source to use
+                      (Secret or AWS)
                     type: string
                 required:
                 - source

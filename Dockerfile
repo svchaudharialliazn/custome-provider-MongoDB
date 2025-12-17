@@ -50,7 +50,7 @@ FROM gcr.io/distroless/static:nonroot AS runtime
 LABEL org.opencontainers.image.title="Swap Provider MongoDB" \
       org.opencontainers.image.description="Crossplane provider for MongoDB Atlas with AWS Secrets Manager integration" \
       org.opencontainers.image.vendor="svchaudhari" \
-      org.opencontainers.image.source="https://github.com/svchaudhari/Swap-Provider-MongoDB" \
+      org.opencontainers.image.source="https://github.com/svchaudharialliazn/swapnil-provider-mongodb" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}"
 

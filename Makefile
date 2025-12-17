@@ -1,6 +1,6 @@
 # Project Setup
 PROJECT_NAME := swapnil-provider-mongodb
-PROJECT_REPO := github.com/svchaudhari/Swap-Provider-MongoDB
+PROJECT_REPO := github.com/svchaudharialliazn/swapnil-provider-mongodb
 
 # Docker & Registry
 DOCKERHUB_ORG ?= svchaudharialliazn

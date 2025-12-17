@@ -33,6 +33,14 @@ func NewVPCEndpointClient(ctx context.Context, creds AWSCredentials) (*VPCEndpoi
 		return nil, fmt.Errorf("region is required in credentials")
 	}
 
+	fmt.Printf("DEBUG: Creating VPC endpoint client for region: %s\n", creds.Region)
+	if len(creds.AccessKeyID) > 0 {
+		fmt.Printf("DEBUG: AccessKeyID: %s\n", creds.AccessKeyID[:min(10, len(creds.AccessKeyID))])
+	} else {
+		fmt.Printf("DEBUG: AccessKeyID: (empty)\n")
+	}
+	fmt.Printf("DEBUG: SessionToken present: %v (length: %d)\n", len(creds.SessionToken) > 0, len(creds.SessionToken))
+
 	// Create credentials provider
 	credProvider := credentials.NewStaticCredentialsProvider(
 		creds.AccessKeyID,
@@ -40,19 +48,34 @@ func NewVPCEndpointClient(ctx context.Context, creds AWSCredentials) (*VPCEndpoi
 		creds.SessionToken,
 	)
 
-	// Explicit EC2 endpoint for the given region
+	// Verify credentials work
+	credValue, err := credProvider.Retrieve(ctx)
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to retrieve credentials: %v\n", err)
+		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
+	}
+	fmt.Printf("DEBUG: Credentials retrieved successfully\n")
+	if len(credValue.AccessKeyID) > 0 {
+		fmt.Printf("DEBUG: AccessKey from provider: %s\n", credValue.AccessKeyID[:min(10, len(credValue.AccessKeyID))])
+	}
+
+	// Build explicit endpoint URL
 	endpointURL := fmt.Sprintf("https://ec2.%s.amazonaws.com", creds.Region)
+	fmt.Printf("DEBUG: Using explicit endpoint URL: %s\n", endpointURL)
 
 	// Resolver compatible with current SDK versions
 	resolver := aws.EndpointResolverWithOptionsFunc(
 		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			// Handle EC2 service
 			if service == ec2.ServiceID {
+				fmt.Printf("DEBUG: Resolving EC2 endpoint for region=%s -> %s\n", region, endpointURL)
 				return aws.Endpoint{
 					URL:           endpointURL,
 					SigningRegion: creds.Region,
 					Source:        aws.EndpointSourceCustom,
 				}, nil
 			}
+			// Fall back to default for other services
 			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
 		},
 	)
@@ -64,16 +87,34 @@ func NewVPCEndpointClient(ctx context.Context, creds AWSCredentials) (*VPCEndpoi
 		config.WithEndpointResolverWithOptions(resolver),
 	)
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to load config: %v\n", err)
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
+	fmt.Printf("DEBUG: AWS config loaded successfully\n")
+	fmt.Printf("DEBUG: Config Region: %s\n", cfg.Region)
+
 	// Create EC2 client
 	ec2Client := ec2.NewFromConfig(cfg)
+
+	fmt.Printf("DEBUG: EC2 client created successfully\n")
+	fmt.Printf("  Region: %s\n", creds.Region)
+	fmt.Printf("  Endpoint: %s\n", endpointURL)
+	if len(creds.AccessKeyID) > 0 {
+		fmt.Printf("  AccessKeyID: %s...\n", creds.AccessKeyID[:min(10, len(creds.AccessKeyID))])
+	}
 
 	return &VPCEndpointClient{
 		ec2Client: ec2Client,
 		region:    creds.Region,
 	}, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // CreateVPCEndpointInput mirrors AWS SDK input structure
@@ -83,9 +124,9 @@ type CreateVPCEndpointInput struct {
 	SubnetIDs         []string
 	SecurityGroupIDs  []string
 	VPCEndpointType   string // Interface or Gateway
-	IPAddressType     string // ipv4 or ipv6 (currently unused)
+	IPAddressType     string // ipv4 or ipv6
 	PolicyDocument    string // Optional: restrictive policy
-	PrivateDNSEnabled bool   // Enable private DNS (Interface endpoints)
+	PrivateDNSEnabled bool   // Enable private DNS
 	TagSpecifications map[string]string
 }
 
@@ -111,9 +152,23 @@ type NetworkInterface struct {
 
 // CreateVPCEndpoint creates an AWS VPC endpoint using AWS SDK
 func (c *VPCEndpointClient) CreateVPCEndpoint(ctx context.Context, input CreateVPCEndpointInput) (*VPCEndpointOutput, error) {
+	// Validate required fields
 	if input.VpcID == "" || input.ServiceName == "" {
 		return nil, fmt.Errorf("VPC ID and Service Name are required")
 	}
+
+	// ===== DEBUG SECTION =====
+	fmt.Printf("\n========== DEBUG CreateVPCEndpoint ==========\n")
+	fmt.Printf("Input parameters:\n")
+	fmt.Printf("  VpcID: %s\n", input.VpcID)
+	fmt.Printf("  ServiceName: %s\n", input.ServiceName)
+	fmt.Printf("  VpcEndpointType: %s\n", input.VPCEndpointType)
+	fmt.Printf("  SubnetIDs: %v\n", input.SubnetIDs)
+	fmt.Printf("  SecurityGroupIDs: %v\n", input.SecurityGroupIDs)
+	fmt.Printf("Client info:\n")
+	fmt.Printf("  Region: %s\n", c.region)
+	fmt.Printf("  EC2Client: %v\n", c.ec2Client != nil)
+	fmt.Printf("==========================================\n\n")
 
 	// Convert string type to AWS enum type
 	endpointType := types.VpcEndpointTypeInterface
@@ -131,18 +186,51 @@ func (c *VPCEndpointClient) CreateVPCEndpoint(ctx context.Context, input CreateV
 		TagSpecifications: buildTagSpecifications(input.TagSpecifications),
 	}
 
+	// ===== LOG THE REQUEST =====
+	fmt.Printf("\n========== AWS Request ==========\n")
+	fmt.Printf("  VpcId: %s\n", *req.VpcId)
+	fmt.Printf("  ServiceName: %s\n", *req.ServiceName)
+	fmt.Printf("  VpcEndpointType: %v\n", req.VpcEndpointType)
+	fmt.Printf("  SubnetIds: %v\n", req.SubnetIds)
+	fmt.Printf("  SecurityGroupIds: %v\n", req.SecurityGroupIds)
+	fmt.Printf("==================================\n\n")
+
+	// Add optional policy document
 	if input.PolicyDocument != "" {
 		req.PolicyDocument = aws.String(input.PolicyDocument)
 	}
+
+	// Add private DNS settings for Interface endpoints
 	if input.VPCEndpointType == "Interface" && input.PrivateDNSEnabled {
 		req.PrivateDnsEnabled = aws.Bool(true)
 	}
 
+	// ===== CATCH THE ERROR WITH DETAILS =====
+	fmt.Printf("Calling AWS CreateVpcEndpoint...\n")
 	result, err := c.ec2Client.CreateVpcEndpoint(ctx, req)
 	if err != nil {
+		fmt.Printf("\n!!!!!! ERROR OCCURRED !!!!!\n")
+		fmt.Printf("Error type: %T\n", err)
+		fmt.Printf("Error message: %v\n", err)
+		fmt.Printf("Error string: %s\n", err.Error())
+
+		// Try to get more details about the error
+		if aerr, ok := err.(interface{ ErrorCode() string }); ok {
+			fmt.Printf("AWS Error Code: %s\n", aerr.ErrorCode())
+		}
+
+		fmt.Printf("!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n")
+
 		return nil, fmt.Errorf("failed to create VPC endpoint: %w", err)
 	}
 
+	// ===== LOG SUCCESS =====
+	fmt.Printf("\n✅ VPC Endpoint created successfully!\n")
+	fmt.Printf("  VpcEndpointId: %s\n", *result.VpcEndpoint.VpcEndpointId)
+	fmt.Printf("  State: %v\n", result.VpcEndpoint.State)
+	fmt.Printf("=====================================\n\n")
+
+	// Transform AWS response to our model
 	output := &VPCEndpointOutput{
 		VPCEndpointID:   aws.ToString(result.VpcEndpoint.VpcEndpointId),
 		ServiceName:     aws.ToString(result.VpcEndpoint.ServiceName),
@@ -152,9 +240,10 @@ func (c *VPCEndpointClient) CreateVPCEndpoint(ctx context.Context, input CreateV
 		GroupIDs:        extractSecurityGroupIDs(result.VpcEndpoint.Groups),
 	}
 
-	// Placeholder for ENI details (requires additional DescribeNetworkInterfaces calls)
+	// Extract network interface details if available
 	if result.VpcEndpoint.NetworkInterfaceIds != nil {
 		output.NetworkInterfaces = make([]NetworkInterface, len(result.VpcEndpoint.NetworkInterfaceIds))
+		// Note: To get detailed ENI info, would need separate DescribeNetworkInterfaces call
 	}
 
 	return output, nil
@@ -172,6 +261,7 @@ func (c *VPCEndpointClient) GetVPCEndpointStatus(ctx context.Context, vpcEndpoin
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe VPC endpoint: %w", err)
 	}
+
 	if len(result.VpcEndpoints) == 0 {
 		return nil, fmt.Errorf("VPC endpoint not found: %s", vpcEndpointID)
 	}
@@ -186,10 +276,12 @@ func (c *VPCEndpointClient) GetVPCEndpointStatus(ctx context.Context, vpcEndpoin
 		GroupIDs:        extractSecurityGroupIDs(vpce.Groups),
 	}
 
+	// Extract private DNS name for Interface endpoints
 	if vpce.DnsEntries != nil && len(vpce.DnsEntries) > 0 {
 		output.PrivateDNSName = aws.ToString(vpce.DnsEntries[0].DnsName)
 	}
 
+	// Transform network interface info
 	output.NetworkInterfaces = make([]NetworkInterface, len(vpce.NetworkInterfaceIds))
 	for i, eniID := range vpce.NetworkInterfaceIds {
 		output.NetworkInterfaces[i].NetworkInterfaceID = eniID
@@ -215,12 +307,14 @@ func (c *VPCEndpointClient) DeleteVPCEndpoint(ctx context.Context, vpcEndpointID
 }
 
 // ModifyVPCEndpointServiceConfiguration modifies VPC endpoint attributes
-// Supports modifying security groups
+// Note: AWS VPC endpoints have limited modification capabilities
+// This supports modifying security groups and subnet associations
 func (c *VPCEndpointClient) ModifyVPCEndpointServiceConfiguration(ctx context.Context, vpcEndpointID string, securityGroupIDs []string) error {
 	if vpcEndpointID == "" {
 		return fmt.Errorf("VPC endpoint ID is required")
 	}
 
+	// Build modify request - only supports limited fields
 	req := &ec2.ModifyVpcEndpointInput{
 		VpcEndpointId:       aws.String(vpcEndpointID),
 		AddSecurityGroupIds: securityGroupIDs,
@@ -283,10 +377,12 @@ func (c *VPCEndpointClient) WaitForVPCEndpointAvailable(ctx context.Context, vpc
 		if endpoint.State == "available" {
 			return nil
 		}
+
 		if endpoint.State == "failed" || endpoint.State == "deleted" {
 			return fmt.Errorf("VPC endpoint entered terminal state: %s", endpoint.State)
 		}
 
+		// Sleep and retry
 		select {
 		case <-time.After(5 * time.Second):
 			attempt++

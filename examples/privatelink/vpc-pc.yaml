@@ -1,0 +1,12 @@
+apiVersion: mongodb.allianz.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+#  region: eu-central-1
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: mongodb-atlas-aws-creds
+      key: credentials

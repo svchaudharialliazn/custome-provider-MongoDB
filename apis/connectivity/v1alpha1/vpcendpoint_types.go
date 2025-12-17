@@ -25,31 +25,48 @@ import (
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 )
 
-// VPCEndpointParameters are the configurable fields of a AWSPrivateLink.
+// VPCEndpointParameters are the configurable fields of a VPC Endpoint using AWS SDK.
 type VPCEndpointParameters struct {
-	VpcID            string   `json:"vpcId"`           // example vpc-03a75e9d856407da5
-	ServiceName      string   `json:"serviceName"`     // example com.amazonaws.vpce.eu-central-1.vpce-svc-02c21ee840752cff7
-	AccountID        string   `json:"accountId"`       // example 198927051560
-	SubnetIDs        []string `json:"subnetIds"`       // example [ subnet-000ff8403aca2347d ]
-	SecurityGroupIDs []string `json:"securityIds"`     // example [ sg-0333847892bf56879 ]
-	Region           string   `json:"region"`          // example eu-central-1
-	IPAddressType    string   `json:"ipAddressType"`   // example ipv4
-	VPCEndpointType  string   `json:"vpcEndpointType"` // example Interface
+	VpcID            string   `json:"vpcId"`            // example vpc-03a75e9d856407da5
+	ServiceName      string   `json:"serviceName"`      // example com.amazonaws.vpce.eu-central-1.vpce-svc-02c21ee840752cff7
+	AccountID        string   `json:"accountId"`        // example 198927051560
+	SubnetIDs        []string `json:"subnetIds"`        // example [ subnet-000ff8403aca2347d ]
+	SecurityGroupIDs []string `json:"securityGroupIds"` // example [ sg-0333847892bf56879 ]
+	Region           string   `json:"region"`           // example eu-central-1
+	IPAddressType    string   `json:"ipAddressType"`    // example ipv4
+	VPCEndpointType  string   `json:"vpcEndpointType"`  // example Interface or Gateway
+
+	// NEW AWS SDK specific fields
+	PrivateDNSEnabled *bool             `json:"privateDnsEnabled,omitempty"` // Enable private DNS for Interface endpoints
+	PolicyDocument    string            `json:"policyDocument,omitempty"`    // Optional restrictive policy JSON
+	TagSpecifications map[string]string `json:"tagSpecifications,omitempty"` // AWS resource tags
 }
 
-// VPCEndpointObservation are the observable fields of a AWSPrivateLink.
+// VPCEndpointObservation are the observable fields of a VPC Endpoint.
 type VPCEndpointObservation struct {
-	State         string `json:"state"`
-	VpcEndpointID string `json:"vpcEndpointId"`
+	State               string                `json:"state"`
+	VpcEndpointID       string                `json:"vpcEndpointId"`
+	PrivateDNSName      string                `json:"privateDnsName,omitempty"`      // NEW: Private DNS hostname
+	NetworkInterfaceIds []string              `json:"networkInterfaceIds,omitempty"` // NEW: ENI details
+	NetworkInterfaces   []NetworkInterfaceObs `json:"networkInterfaces,omitempty"`   // NEW: Detailed ENI info
+	CreationTimestamp   string                `json:"creationTimestamp,omitempty"`   // NEW: Endpoint creation time
 }
 
-// A VPCEndpointSpec defines the desired state of a AWSPrivateLink.
+// NetworkInterfaceObs represents Elastic Network Interface details for the VPC endpoint
+type NetworkInterfaceObs struct {
+	NetworkInterfaceID string `json:"networkInterfaceId"`
+	SubnetID           string `json:"subnetId"`
+	PrivateIP          string `json:"privateIp"`
+	Status             string `json:"status"`
+}
+
+// A VPCEndpointSpec defines the desired state of a VPC Endpoint.
 type VPCEndpointSpec struct {
 	xpv1.ResourceSpec `json:",inline"`
 	ForProvider       VPCEndpointParameters `json:"forProvider"`
 }
 
-// A VPCEndpointStatus represents the observed state of a AWSPrivateLink.
+// A VPCEndpointStatus represents the observed state of a VPC Endpoint.
 type VPCEndpointStatus struct {
 	xpv1.ResourceStatus `json:",inline"`
 	AtProvider          VPCEndpointObservation `json:"atProvider,omitempty"`
@@ -57,9 +74,10 @@ type VPCEndpointStatus struct {
 
 // +kubebuilder:object:root=true
 
-// A VPCEndpoint is an example API type.
+// A VPCEndpoint is a managed resource for AWS VPC Endpoints via Crossplane.
 // +kubebuilder:printcolumn:name="READY",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="SYNCED",type="string",JSONPath=".status.conditions[?(@.type=='Synced')].status"
+// +kubebuilder:printcolumn:name="STATE",type="string",JSONPath=".status.atProvider.state"
 // +kubebuilder:printcolumn:name="EXTERNAL-NAME",type="string",JSONPath=".metadata.annotations.crossplane\\.io/external-name"
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:subresource:status
@@ -74,14 +92,14 @@ type VPCEndpoint struct {
 
 // +kubebuilder:object:root=true
 
-// VPCEndpointList contains a list of AWSPrivateLink
+// VPCEndpointList contains a list of VPCEndpoint resources.
 type VPCEndpointList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []VPCEndpoint `json:"items"`
 }
 
-// AWSPrivateLink type metadata.
+// VPCEndpoint type metadata.
 var (
 	VPCEndpointKind             = reflect.TypeOf(VPCEndpoint{}).Name()
 	VPCEndpointGroupKind        = schema.GroupKind{Group: Group, Kind: VPCEndpointKind}.String()
