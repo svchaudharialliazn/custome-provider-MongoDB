@@ -12,3 +12,4 @@ Taskfile.yml
 Taskfile.yaml
 Taskfile.dist.yml
 examples/provider/config_temp.yaml
+provider-mongodb-controller
