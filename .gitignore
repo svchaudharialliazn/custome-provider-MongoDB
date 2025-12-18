@@ -13,3 +13,11 @@ Taskfile.yaml
 Taskfile.dist.yml
 examples/provider/config_temp.yaml
 provider-mongodb-controller
+
+# Secrets - NEVER commit these!
+**/secret.yaml
+**/*secret*.yaml
+*.pem
+*.key
+.env
+.env.*
