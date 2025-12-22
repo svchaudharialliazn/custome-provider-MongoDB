@@ -120,6 +120,49 @@ spec:
                     required:
                     - region
                     type: object
+                  networkAccessConfig:
+                    description: IP Access configuration
+                    properties:
+                      autoCleanup:
+                        description: AutoCleanup determines if IPs should be removed
+                          when org is deleted
+                        type: boolean
+                      enabled:
+                        description: Enabled controls whether IP access provisioning
+                          is active
+                        type: boolean
+                      ips:
+                        description: IPs is the list of individual IP addresses to
+                          whitelist
+                        items:
+                          description: IPAccessEntry represents a single IP address
+                            entry in the access list
+                          properties:
+                            cidrBlock:
+                              description: |-
+                                CIDRBlock is the CIDR notation of the IP (always {IP}/32 for single IPs)
+                                Make this optional so it's not required in spec; controller will populate in status.
+                              type: string
+                            comment:
+                              description: |-
+                                Comment is an optional description of the IP access
+                                Example: "Jenkins CI Pipeline", "Production API Server"
+                              type: string
+                            createdAt:
+                              description: CreatedAt tracks when this IP was provisioned
+                              format: date-time
+                              type: string
+                            ip:
+                              description: IP is a single IPv4 address (e.g., "203.0.113.45")
+                              type: string
+                          required:
+                          - ip
+                          type: object
+                        type: array
+                    required:
+                    - autoCleanup
+                    - enabled
+                    type: object
                   ownerID:
                     type: string
                 required:
@@ -357,7 +400,11 @@ spec:
                     type: string
                   deletionAttemptCount:
                     type: integer
-                  kmsKeyID:
+                  ipAccessEntryCount:
+                    type: integer
+                  ipAccessError:
+                    type: string
+                  kmsKeyId:
                     type: string
                   lastDeletionAttemptError:
                     type: string
@@ -365,10 +412,40 @@ spec:
                     description: Deletion tracking
                     format: date-time
                     type: string
+                  lastIPAccessUpdate:
+                    format: date-time
+                    type: string
                   orgID:
                     type: string
                   orgName:
                     type: string
+                  provisionedIPs:
+                    description: IP access status
+                    items:
+                      description: IPAccessEntry represents a single IP address entry
+                        in the access list
+                      properties:
+                        cidrBlock:
+                          description: |-
+                            CIDRBlock is the CIDR notation of the IP (always {IP}/32 for single IPs)
+                            Make this optional so it's not required in spec; controller will populate in status.
+                          type: string
+                        comment:
+                          description: |-
+                            Comment is an optional description of the IP access
+                            Example: "Jenkins CI Pipeline", "Production API Server"
+                          type: string
+                        createdAt:
+                          description: CreatedAt tracks when this IP was provisioned
+                          format: date-time
+                          type: string
+                        ip:
+                          description: IP is a single IPv4 address (e.g., "203.0.113.45")
+                          type: string
+                      required:
+                      - ip
+                      type: object
+                    type: array
                   secretARN:
                     type: string
                   secretName:

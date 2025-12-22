@@ -22,15 +22,23 @@ type Service interface {
 	UpdateOrganization(ctx context.Context, input UpdateOrganizationInput) (*Organization, error)
 	DeleteOrganization(ctx context.Context, id string) error
 	VerifyOrganizationDeletion(ctx context.Context, id string) error
+
+	// Legacy org-level access list (not used for API-key provisioning now)
+	AddIPToAccessList(ctx context.Context, orgID string, input AddIPInput) error
+	RemoveIPFromAccessList(ctx context.Context, orgID string, ip string) error
+	GetIPAccessList(ctx context.Context, orgID string) ([]IPAccessListEntry, error)
+
+	// Org API key–scoped IP access list
+	FindAPIKeyID(ctx context.Context, orgID, publicKey, description string) (string, error)
+	AddIPsToAPIKeyAccessList(ctx context.Context, orgID, apiKeyID string, inputs []AddIPInput) error
+	RemoveIPFromAPIKeyAccessList(ctx context.Context, orgID, apiKeyID, ip string) error
 }
 
-// Credentials stores public/private API keys.
 type Credentials struct {
 	PublicKey  string `json:"publicKey"`
 	PrivateKey string `json:"privateKey"`
 }
 
-// Organization represents a MongoDB Atlas organization.
 type Organization struct {
 	ID         string    `json:"id,omitempty"`
 	Name       string    `json:"name"`
@@ -39,32 +47,27 @@ type Organization struct {
 	Created    time.Time `json:"created,omitempty"`
 }
 
-// APIKey describes an API key for creation payload
 type APIKey struct {
 	Description string   `json:"desc"`
 	Roles       []string `json:"roles"`
 }
 
-// CreateOrganizationInput specifies details for org creation.
 type CreateOrganizationInput struct {
 	Name    string `json:"name"`
 	OwnerID string `json:"orgOwnerId"`
 	APIKey  APIKey `json:"apiKey"`
 }
 
-// UpdateOrganizationInput specifies details for org update.
 type UpdateOrganizationInput struct {
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
 }
 
-// APIKeyPair stores public/private keys.
 type APIKeyPair struct {
 	PublicKey  string `json:"publicKey"`
 	PrivateKey string `json:"privateKey"`
 }
 
-// Error represents an API error response.
 type Error struct {
 	Code   int    `json:"error"`
 	Detail string `json:"detail"`
@@ -75,12 +78,10 @@ func (e Error) Error() string {
 	return fmt.Sprintf("MongoDB Atlas API error %d: %s - %s", e.Code, e.Reason, e.Detail)
 }
 
-// NotFoundError signals a missing resource.
 type NotFoundError struct{ Err Error }
 
 func (e *NotFoundError) Error() string { return e.Err.Error() }
 
-// RetryableError signals an error that should be retried
 type RetryableError struct {
 	Err error
 	Msg string
@@ -90,7 +91,6 @@ func (e *RetryableError) Error() string {
 	return fmt.Sprintf("retryable error: %s - %v", e.Msg, e.Err)
 }
 
-// ConflictError signals resource is in transition
 type ConflictError struct {
 	Err error
 	Msg string
@@ -100,19 +100,16 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("conflict error (resource in transition): %s - %v", e.Msg, e.Err)
 }
 
-// client implements Service.
 type client struct {
 	httpClient  *http.Client
 	baseURL     string
 	credentials Credentials
 }
 
-// NewService returns a new MongoDB client with default timeout (30s).
 func NewService(creds Credentials) Service {
 	return NewServiceWithTimeout(creds, 30*time.Second)
 }
 
-// NewServiceWithTimeout returns a new MongoDB client with the provided HTTP timeout.
 func NewServiceWithTimeout(creds Credentials, timeout time.Duration) Service {
 	transport := &digest.Transport{Username: creds.PublicKey, Password: creds.PrivateKey}
 	httpClient := &http.Client{
@@ -126,7 +123,6 @@ func NewServiceWithTimeout(creds Credentials, timeout time.Duration) Service {
 	}
 }
 
-// NewLongTimeoutService returns a client with a longer timeout suitable for slow delete operations.
 func NewLongTimeoutService(creds Credentials) Service {
 	transport := &digest.Transport{Username: creds.PublicKey, Password: creds.PrivateKey}
 	httpClient := &http.Client{
@@ -140,7 +136,6 @@ func NewLongTimeoutService(creds Credentials) Service {
 	}
 }
 
-// ErrNotFound standard error for missing resources.
 var ErrNotFound = errors.New("not found")
 
 func IsNotFoundError(err error) bool {
@@ -158,7 +153,6 @@ func IsConflictError(err error) bool {
 	return ok
 }
 
-// CreateOrganization creates a new organization and returns API keys.
 func (c *client) CreateOrganization(ctx context.Context, input CreateOrganizationInput) (*Organization, APIKeyPair, error) {
 	if input.Name == "" {
 		return nil, APIKeyPair{}, errors.New("organization name cannot be empty")
@@ -204,7 +198,6 @@ func (c *client) CreateOrganization(ctx context.Context, input CreateOrganizatio
 	return org, keys, nil
 }
 
-// GetOrganization retrieves org by ID.
 func (c *client) GetOrganization(ctx context.Context, id string) (*Organization, error) {
 	org := &Organization{}
 	if err := c.makeRequest(ctx, http.MethodGet, fmt.Sprintf("/orgs/%s", id), nil, org); err != nil {
@@ -213,7 +206,6 @@ func (c *client) GetOrganization(ctx context.Context, id string) (*Organization,
 	return org, nil
 }
 
-// GetOrganizationByName retrieves org by name.
 func (c *client) GetOrganizationByName(ctx context.Context, name string) (*Organization, error) {
 	if name == "" {
 		return nil, errors.New("organization name cannot be empty")
@@ -236,12 +228,10 @@ func (c *client) GetOrganizationByName(ctx context.Context, name string) (*Organ
 	return &result.Results[0], nil
 }
 
-// GetOrganizationByID wrapper for GetOrganization
 func (c *client) GetOrganizationByID(ctx context.Context, id string) (*Organization, error) {
 	return c.GetOrganization(ctx, id)
 }
 
-// UpdateOrganization updates org.
 func (c *client) UpdateOrganization(ctx context.Context, input UpdateOrganizationInput) (*Organization, error) {
 	org := &Organization{}
 	payload := map[string]interface{}{}
@@ -254,7 +244,6 @@ func (c *client) UpdateOrganization(ctx context.Context, input UpdateOrganizatio
 	return org, nil
 }
 
-// DeleteOrganization deletes org by ID.
 func (c *client) DeleteOrganization(ctx context.Context, id string) error {
 	if id == "" {
 		return errors.New("organization id cannot be empty")
@@ -262,7 +251,6 @@ func (c *client) DeleteOrganization(ctx context.Context, id string) error {
 	return c.makeRequest(ctx, http.MethodDelete, fmt.Sprintf("/orgs/%s", id), nil, nil)
 }
 
-// VerifyOrganizationDeletion verifies org deletion.
 func (c *client) VerifyOrganizationDeletion(ctx context.Context, id string) error {
 	if id == "" {
 		return errors.New("organization id cannot be empty")
@@ -282,7 +270,6 @@ func (c *client) VerifyOrganizationDeletion(ctx context.Context, id string) erro
 	return errors.Errorf("organization %s still exists", id)
 }
 
-// makeRequest performs HTTP request with digest auth and error handling.
 func (c *client) makeRequest(ctx context.Context, method, endpoint string, payload interface{}, result interface{}) error {
 	url := c.baseURL + endpoint
 	var body io.Reader
@@ -303,7 +290,6 @@ func (c *client) makeRequest(ctx context.Context, method, endpoint string, paylo
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		// treat context cancellations and timeouts as retryable
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
 			strings.Contains(err.Error(), "Client.Timeout") || strings.Contains(err.Error(), "timeout") {
 			return &RetryableError{Err: err, Msg: "HTTP request failed (network error)"}
@@ -324,7 +310,6 @@ func (c *client) makeRequest(ctx context.Context, method, endpoint string, paylo
 			return &ConflictError{Err: apiErr, Msg: "resource in conflict state"}
 		}
 		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-			// server errors and rate limits are retryable
 			return &RetryableError{Err: apiErr, Msg: "retryable HTTP error"}
 		}
 		return apiErr
@@ -339,3 +324,68 @@ func (c *client) makeRequest(ctx context.Context, method, endpoint string, paylo
 	return nil
 }
 
+// IP access types
+type AddIPInput struct {
+	IP      string  `json:"ip"`
+	Comment *string `json:"comment,omitempty"`
+}
+
+type IPAccessListEntry struct {
+	IPAddress string    `json:"ipAddress"`
+	CIDR      string    `json:"cidr"`
+	Comment   string    `json:"comment"`
+	Created   time.Time `json:"created"`
+}
+
+// Legacy org-level IP access implementations
+func (c *client) AddIPToAccessList(ctx context.Context, orgID string, input AddIPInput) error {
+	if orgID == "" {
+		return errors.New("organization ID cannot be empty")
+	}
+	if input.IP == "" {
+		return errors.New("IP address cannot be empty")
+	}
+
+	payload := map[string]interface{}{
+		"ipAddress": input.IP,
+	}
+	if input.Comment != nil && *input.Comment != "" {
+		payload["comment"] = *input.Comment
+	}
+
+	endpoint := fmt.Sprintf("/orgs/%s/accessList", orgID)
+	return c.makeRequest(ctx, http.MethodPost, endpoint, payload, nil)
+}
+
+func (c *client) RemoveIPFromAccessList(ctx context.Context, orgID string, ip string) error {
+	if orgID == "" {
+		return errors.New("organization ID cannot be empty")
+	}
+	if ip == "" {
+		return errors.New("IP address cannot be empty")
+	}
+
+	endpoint := fmt.Sprintf("/orgs/%s/accessList/%s", orgID, ip)
+	return c.makeRequest(ctx, http.MethodDelete, endpoint, nil, nil)
+}
+
+func (c *client) GetIPAccessList(ctx context.Context, orgID string) ([]IPAccessListEntry, error) {
+	if orgID == "" {
+		return nil, errors.New("organization ID cannot be empty")
+	}
+
+	var result struct {
+		Results []IPAccessListEntry `json:"results"`
+		Links   []interface{}       `json:"links"`
+	}
+
+	endpoint := fmt.Sprintf("/orgs/%s/accessList", orgID)
+	if err := c.makeRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
+		if IsNotFoundError(err) {
+			return []IPAccessListEntry{}, nil
+		}
+		return nil, errors.Wrap(err, "failed to get IP access list")
+	}
+
+	return result.Results, nil
+}

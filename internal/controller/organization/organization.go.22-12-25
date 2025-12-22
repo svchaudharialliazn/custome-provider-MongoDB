@@ -5,12 +5,13 @@ import (
 	"context"
 	"strings"
 
-	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/pkg/errors"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/connection"
@@ -94,6 +95,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, errors.Wrap(err, errTrackPCUsage)
 	}
 
+	// Defensive provider config reference check
 	if cr.GetProviderConfigReference() == nil {
 		return nil, errors.New(errGetPC)
 	}
@@ -178,16 +180,17 @@ func isUnauthorizedError(err error) bool {
 	if err == nil {
 		return false
 	}
-	e := strings.ToLower(err.Error())
-	return strings.Contains(e, "401") || strings.Contains(e, "unauthorized") || strings.Contains(e, "forbidden") || strings.Contains(e, "403")
+	e := err.Error()
+	return strings.Contains(e, "401") || strings.Contains(strings.ToLower(e), "unauthorized") || strings.Contains(strings.ToLower(e), "forbidden")
 }
 
+// helper: treat various Atlas/network transient errors as "transient/opaque deletion success"
 func isAtlasTransientOrOpaqueDeleteErr(err error) bool {
 	if err == nil {
 		return false
 	}
 	e := strings.ToLower(err.Error())
-	if strings.Contains(e, "api error 0") {
+	if strings.Contains(e, "mongo") && strings.Contains(e, "api error 0") {
 		return true
 	}
 	if strings.Contains(e, "internal server error") || strings.Contains(e, "500") {
@@ -204,8 +207,10 @@ func isAtlasTransientOrOpaqueDeleteErr(err error) bool {
 
 // updateStatusWithRetry updates status and retries once on resourceVersion conflict.
 func (c *external) updateStatusWithRetry(ctx context.Context, obj *v1alpha1.Organization) error {
+	// First attempt
 	if err := c.kube.Status().Update(ctx, obj); err != nil {
 		if apierrors.IsConflict(err) {
+			// Re-get and set status again
 			latest := &v1alpha1.Organization{}
 			if gerr := c.kube.Get(ctx, types.NamespacedName{Name: obj.Name}, latest); gerr != nil {
 				return errors.Wrap(gerr, "re-get after status conflict")
@@ -218,7 +223,7 @@ func (c *external) updateStatusWithRetry(ctx context.Context, obj *v1alpha1.Orga
 	return nil
 }
 
-// provisionIPAccess adds desired IPs to the org API key access list using a single bulk POST.
+// provisionIPAccess: add all desired IPs in a single bulk POST to avoid mid-flight lockout.
 func (c *external) provisionIPAccess(
 	ctx context.Context,
 	orgID string,
@@ -226,7 +231,6 @@ func (c *external) provisionIPAccess(
 	org *svc.Organization,
 	apiKey svc.APIKeyPair,
 ) ([]v1alpha1.IPAccessEntry, error) {
-
 	if len(ipEntries) == 0 {
 		c.logger.Debug("No IPs to provision")
 		return []v1alpha1.IPAccessEntry{}, nil
@@ -237,7 +241,7 @@ func (c *external) provisionIPAccess(
 		PrivateKey: apiKey.PrivateKey,
 	})
 
-	// Resolve API key ID for the newly created org API key
+	// Resolve the API key ID for the newly-created org API key
 	apiKeyID, err := orgService.FindAPIKeyID(ctx, orgID, apiKey.PublicKey, "")
 	if err != nil || apiKeyID == "" {
 		c.logger.Info("Could not resolve organization API key ID for IP access provisioning; skipping",
@@ -245,7 +249,7 @@ func (c *external) provisionIPAccess(
 		return nil, nil
 	}
 
-	// Build bulk payload (omit comment to avoid 400 on API-key access list)
+	// Build bulk payload (omit comment to avoid 400)
 	bulk := make([]svc.AddIPInput, 0, len(ipEntries))
 	for _, e := range ipEntries {
 		bulk = append(bulk, svc.AddIPInput{IP: e.IP})
@@ -253,14 +257,13 @@ func (c *external) provisionIPAccess(
 
 	c.logger.Info("Bulk adding IPs to org API key access list",
 		"orgID", orgID, "apiKeyID", apiKeyID, "count", len(bulk))
-
 	if err := orgService.AddIPsToAPIKeyAccessList(ctx, orgID, apiKeyID, bulk); err != nil {
 		c.logger.Info("Failed bulk add to org API key access list",
 			"orgID", orgID, "apiKeyID", apiKeyID, "error", err)
 		return nil, errors.Wrap(err, "bulk add IPs to org API key access list")
 	}
 
-	// Prepare status
+	// Prepare status entries
 	now := metav1.Now()
 	provisioned := make([]v1alpha1.IPAccessEntry, 0, len(ipEntries))
 	for _, e := range ipEntries {
@@ -272,70 +275,41 @@ func (c *external) provisionIPAccess(
 
 	c.logger.Info("Successfully bulk provisioned IP access for org API key",
 		"orgID", orgID, "apiKeyID", apiKeyID, "count", len(provisioned))
-
 	return provisioned, nil
 }
 
+// Observe implements managed.ExternalClient Observe.
+// Behavior:
+//   - If external-name is set -> observe using that org id.
+//   - If external-name is empty -> try to find an existing org by name and adopt it (set external-name).
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
 	cr := mg.(*v1alpha1.Organization)
 	orgID := meta.GetExternalName(cr)
 
-	// Restore external-name from status if it was cleared in the manifest.
-	if orgID == "" && cr.Status.AtProvider.OrgID != "" {
-		restoreID := cr.Status.AtProvider.OrgID
-		c.logger.Debug("Restoring external-name from status", "name", cr.Name, "orgID", restoreID)
-
-		meta.SetExternalName(cr, restoreID)
-		latest := &v1alpha1.Organization{}
-		if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
-			return managed.ExternalObservation{}, errors.Wrap(err, "fetching latest object to restore external-name from status")
-		}
-		meta.SetExternalName(latest, restoreID)
-		if err := c.kube.Update(ctx, latest); err != nil {
-			if apierrors.IsConflict(err) {
-				if err2 := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err2 == nil {
-					meta.SetExternalName(latest, restoreID)
-					if err3 := c.kube.Update(ctx, latest); err3 != nil {
-						return managed.ExternalObservation{}, errors.Wrap(err3, "updating external-name after conflict (restore)")
-					}
-				} else {
-					return managed.ExternalObservation{}, errors.Wrap(err2, "re-get after conflict for external-name restore")
-				}
-			} else {
-				return managed.ExternalObservation{}, errors.Wrap(err, "updating external-name after restore")
-			}
-		}
-
-		cr.SetConditions(xpv1.Available())
-		return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
-	}
-
-	// No external name: try to adopt by name.
+	// If we don't have an external-name, try to find org by name and adopt.
 	if orgID == "" {
 		c.logger.Debug("External name not set — searching Atlas by organization name", "name", cr.Name)
-
 		found, err := c.client.GetOrganizationByName(ctx, cr.Name)
 		if err != nil {
-			// To avoid duplicate creation, do not proceed to create when we cannot verify by name.
-			if isUnauthorizedError(err) || svc.IsRetryableError(err) {
-				msg := "adoption-by-name blocked (auth/network); cannot safely create"
-				c.logger.Info(msg, "error", err)
-				return managed.ExternalObservation{}, errors.Wrap(err, msg)
-			}
+			// If error indicates not found, return not-exists; if unauthorized, proceed to create
 			if svc.IsNotFoundError(err) {
+				return managed.ExternalObservation{ResourceExists: false}, nil
+			}
+			if isUnauthorizedError(err) {
+				c.logger.Info("Atlas denied access while searching by name; will proceed to create", "error", err)
 				return managed.ExternalObservation{ResourceExists: false}, nil
 			}
 			return managed.ExternalObservation{}, errors.Wrap(err, "searching organization by name")
 		}
-
 		if found != nil {
-			// Adopt existing org by name (regardless of ownerID) to avoid duplicates.
+			// Adopt the existing org — persist external-name metadata and status
 			meta.SetExternalName(cr, found.ID)
 			cr.Status.AtProvider.OrgID = found.ID
 			cr.Status.AtProvider.OrgName = found.Name
 			stateActive := v1alpha1.OrganizationStateActive
 			cr.Status.AtProvider.State = &stateActive
 
+			// Persist metadata (external-name) first, then status
 			latest := &v1alpha1.Organization{}
 			if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
 				return managed.ExternalObservation{}, errors.Wrap(err, "fetching latest object to persist external-name")
@@ -343,6 +317,7 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 			meta.SetExternalName(latest, found.ID)
 			if err := c.kube.Update(ctx, latest); err != nil {
 				if apierrors.IsConflict(err) {
+					// try once after re-get
 					if err2 := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err2 == nil {
 						meta.SetExternalName(latest, found.ID)
 						if err3 := c.kube.Update(ctx, latest); err3 != nil {
@@ -363,24 +338,27 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 			return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 		}
 
-		// Not found: proceed to create.
+		// Not found by name -> report not exists (Create will run)
 		return managed.ExternalObservation{ResourceExists: false}, nil
 	}
 
-	// Handle deletion short-circuit.
+	// If deletion in progress on CR, short-circuit to avoid remote calls.
 	if cr.DeletionTimestamp != nil {
 		c.logger.Debug("Organization marked for deletion", "name", cr.Name, "orgID", orgID)
 		cr.SetConditions(xpv1.Deleting())
+		// Report exists true so delete flow runs.
 		return managed.ExternalObservation{ResourceExists: true}, nil
 	}
 
-	// Update secret metadata if present.
+	// We have an external-name — we can observe AWS secret and mark status.
 	secretName := finalSecretName(cr)
 	desc, err := c.awsClient.DescribeSecret(ctx, secretName)
 	if err == nil && desc.ARN != nil {
 		cr.Status.AtProvider.SecretARN = *desc.ARN
 		cr.Status.AtProvider.SecretName = secretName
 	}
+
+	// Optionally we could call Atlas to fetch more state here if required.
 
 	cr.SetConditions(xpv1.Available())
 	return managed.ExternalObservation{
@@ -389,61 +367,37 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	}, nil
 }
 
+// Create implements managed.ExternalClient Create.
 func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.ExternalCreation, error) {
 	cr := mg.(*v1alpha1.Organization)
 
-	// If external-name is set, or can be restored from status, skip creation.
-	if en := meta.GetExternalName(cr); en != "" {
-		c.logger.Info("External name already set; skipping creation", "orgID", en)
-		return managed.ExternalCreation{}, nil
-	}
-	if cr.Status.AtProvider.OrgID != "" {
-		restoreID := cr.Status.AtProvider.OrgID
-		c.logger.Info("External name empty but status has OrgID — restoring and skipping create", "orgID", restoreID)
-
-		latest := &v1alpha1.Organization{}
-		if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
-			return managed.ExternalCreation{}, errors.Wrap(err, "re-get before restoring external-name in create")
-		}
-		meta.SetExternalName(latest, restoreID)
-		if err := c.kube.Update(ctx, latest); err != nil {
-			if apierrors.IsConflict(err) {
-				if err2 := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err2 == nil {
-					meta.SetExternalName(latest, restoreID)
-					if err3 := c.kube.Update(ctx, latest); err3 != nil {
-						return managed.ExternalCreation{}, errors.Wrap(err3, "persisting external-name restore after conflict")
-					}
-				} else {
-					return managed.ExternalCreation{}, errors.Wrap(err2, "re-get after conflict while restoring external-name")
-				}
-			} else {
-				return managed.ExternalCreation{}, errors.Wrap(err, "persisting external-name restore")
-			}
-		}
+	// If external name got set concurrently (adopted), skip create.
+	if meta.GetExternalName(cr) != "" {
+		c.logger.Info("External name already set; skipping creation", "orgID", meta.GetExternalName(cr))
 		return managed.ExternalCreation{}, nil
 	}
 
-	// Guard: ensure we don't create duplicates when we can't verify uniqueness by name.
+	// Check if org already exists by name (defensive)
 	existingOrg, err := c.client.GetOrganizationByName(ctx, cr.Name)
 	if err != nil && !svc.IsNotFoundError(err) {
-		if isUnauthorizedError(err) || svc.IsRetryableError(err) {
-			msg := "cannot safely create: adoption-by-name failed due to authorization/network constraints"
-			c.logger.Info(msg, "error", err)
-			return managed.ExternalCreation{}, errors.Wrap(err, msg)
+		// If unauthorized during search, proceed to create
+		if isUnauthorizedError(err) {
+			c.logger.Info("Atlas denied access while checking existing org; proceeding to create", "error", err)
+		} else {
+			return managed.ExternalCreation{}, errors.Wrap(err, "checking existing organization")
 		}
-		return managed.ExternalCreation{}, errors.Wrap(err, "checking existing organization")
 	}
-	if existingOrg != nil {
-		// Reuse existing org by name (avoid duplicates).
-		c.logger.Info("Organization already exists in Atlas; adopting by name",
-			"orgID", existingOrg.ID, "orgName", existingOrg.Name)
 
+	if existingOrg != nil && existingOrg.OrgOwnerId == cr.Spec.ForProvider.OwnerID {
+		c.logger.Info("Organization already exists in Atlas with same owner; reusing existing org",
+			"orgID", existingOrg.ID, "orgName", existingOrg.Name)
 		meta.SetExternalName(cr, existingOrg.ID)
 		cr.Status.AtProvider.OrgID = existingOrg.ID
 		cr.Status.AtProvider.OrgName = existingOrg.Name
 		stateActive := v1alpha1.OrganizationStateActive
 		cr.Status.AtProvider.State = &stateActive
 
+		// persist metadata and status
 		latest := &v1alpha1.Organization{}
 		if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
 			return managed.ExternalCreation{}, errors.Wrap(err, "re-get before persisting external-name")
@@ -451,6 +405,7 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 		meta.SetExternalName(latest, existingOrg.ID)
 		if err := c.kube.Update(ctx, latest); err != nil {
 			if apierrors.IsConflict(err) {
+				// retry once
 				if err2 := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err2 == nil {
 					meta.SetExternalName(latest, existingOrg.ID)
 					if err3 := c.kube.Update(ctx, latest); err3 != nil {
@@ -467,11 +422,13 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 		if err := c.kube.Status().Update(ctx, latest); err != nil {
 			return managed.ExternalCreation{}, errors.Wrap(err, "updating status after reuse")
 		}
+
 		return managed.ExternalCreation{}, nil
 	}
 
-	// Add our cleanup finalizer up front.
+	// Add finalizer for cleanup (and persist)
 	if !meta.FinalizerExists(cr, FinalizerOrganizationCleanup) {
+		// Persist finalizer safely (get -> modify -> update)
 		latest := &v1alpha1.Organization{}
 		if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
 			return managed.ExternalCreation{}, errors.Wrap(err, "re-get before persisting finalizer")
@@ -498,7 +455,7 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 		return managed.ExternalCreation{}, err
 	}
 
-	// Persist external name and status
+	// Persist external-name (metadata) first so subsequent reconciles see it.
 	meta.SetExternalName(cr, org.ID)
 	cr.Status.AtProvider.OrgID = org.ID
 	cr.Status.AtProvider.OrgName = org.Name
@@ -513,6 +470,7 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 	meta.SetExternalName(latest, org.ID)
 	if err := c.kube.Update(ctx, latest); err != nil {
 		if apierrors.IsConflict(err) {
+			// try once more
 			if err2 := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err2 == nil {
 				meta.SetExternalName(latest, org.ID)
 				if err3 := c.kube.Update(ctx, latest); err3 != nil {
@@ -526,7 +484,6 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 		}
 	}
 
-	// Store org API key in AWS Secrets Manager
 	secretName := finalSecretName(cr)
 	arn, err := c.awsClient.PutSecret(ctx, secretName, awsclient.MongoDBAPICredentials{
 		PublicKey:  apiKey.PublicKey,
@@ -535,27 +492,42 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 	if err != nil {
 		return managed.ExternalCreation{}, errors.Wrap(err, "failed to store API key in AWS Secrets Manager")
 	}
+
 	cr.Status.AtProvider.SecretARN = arn
 	cr.Status.AtProvider.SecretName = secretName
 	stateActive := v1alpha1.OrganizationStateActive
 	cr.Status.AtProvider.State = &stateActive
 
-	// Provision API key–scoped IP access if requested
-	if cr.Spec.ForProvider.NetworkAccessConfig.Enabled && len(cr.Spec.ForProvider.NetworkAccessConfig.IPs) > 0 {
-		c.logger.Info("Provisioning IP access for new organization",
-			"orgID", org.ID, "ipCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
+	// Provision IP Access (org API key access list)
+	if cr.Spec.ForProvider.NetworkAccessConfig.Enabled &&
+		len(cr.Spec.ForProvider.NetworkAccessConfig.IPs) > 0 {
 
-		provisionedIPs, perr := c.provisionIPAccess(ctx, org.ID, cr.Spec.ForProvider.NetworkAccessConfig.IPs, org, apiKey)
-		if perr != nil {
-			c.logger.Info("Failed to provision IP access (will retry on next reconcile)", "orgID", org.ID, "error", perr)
-			cr.Status.AtProvider.IPAccessError = perr.Error()
+		c.logger.Info("Provisioning IP access for new organization",
+			"orgID", org.ID,
+			"ipCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
+
+		provisionedIPs, err := c.provisionIPAccess(
+			ctx,
+			org.ID,
+			cr.Spec.ForProvider.NetworkAccessConfig.IPs,
+			org,
+			apiKey,
+		)
+
+		if err != nil {
+			c.logger.Info("Failed to provision IP access (will retry on next reconcile)",
+				"orgID", org.ID,
+				"error", err)
+			cr.Status.AtProvider.IPAccessError = err.Error()
 		} else {
 			cr.Status.AtProvider.ProvisionedIPs = provisionedIPs
 			cr.Status.AtProvider.IPAccessEntryCount = len(provisionedIPs)
 			now := metav1.Now()
 			cr.Status.AtProvider.LastIPAccessUpdate = &now
 			cr.Status.AtProvider.IPAccessError = ""
-			c.logger.Info("IP access provisioning completed", "orgID", org.ID, "provisionedCount", len(provisionedIPs))
+			c.logger.Info("IP access provisioning completed",
+				"orgID", org.ID,
+				"provisionedCount", len(provisionedIPs))
 		}
 	}
 
@@ -572,25 +544,32 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 	}, nil
 }
 
+// Update implements managed.ExternalClient Update
+// Handles IP access configuration changes (org API key access list)
 func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.ExternalUpdate, error) {
 	cr := mg.(*v1alpha1.Organization)
 	orgID := meta.GetExternalName(cr)
+
 	if orgID == "" {
-		return managed.ExternalUpdate{}, nil
+		return managed.ExternalUpdate{}, nil // Not yet created
 	}
+
+	// If IP access not enabled, nothing to update
 	if !cr.Spec.ForProvider.NetworkAccessConfig.Enabled {
 		return managed.ExternalUpdate{}, nil
 	}
 
 	c.logger.Debug("Checking for IP access updates",
-		"orgID", orgID, "desiredIPCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
+		"orgID", orgID,
+		"desiredIPCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
 
-	// Fetch org credentials from AWS SM (org-scoped API key)
+	// Fetch organization credentials from AWS Secrets Manager
 	secretName := finalSecretName(cr)
 	orgCreds, err := c.awsClient.GetSecret(ctx, secretName)
 	if err != nil {
 		c.logger.Info("Failed to fetch org credentials for IP update", "error", err)
-		return managed.ExternalUpdate{}, errors.Wrap(err, "failed to fetch org credentials for IP update")
+		return managed.ExternalUpdate{}, errors.Wrap(err,
+			"failed to fetch org credentials for IP update")
 	}
 
 	orgService := c.newServiceFn(svc.Credentials{
@@ -598,6 +577,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 		PrivateKey: orgCreds.PrivateKey,
 	})
 
+	// Resolve API key ID for org-level API key
 	apiKeyID, err := orgService.FindAPIKeyID(ctx, orgID, orgCreds.PublicKey, "")
 	if err != nil || apiKeyID == "" {
 		c.logger.Info("Could not resolve organization API key ID for IP update; skipping",
@@ -605,17 +585,18 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 		return managed.ExternalUpdate{}, nil
 	}
 
-	// Build sets
+	// Build maps for easy comparison
 	currentIPs := make(map[string]bool)
 	for _, ip := range cr.Status.AtProvider.ProvisionedIPs {
 		currentIPs[ip.IP] = true
 	}
+
 	desiredIPMap := make(map[string]v1alpha1.IPAccessEntry)
 	for _, ip := range cr.Spec.ForProvider.NetworkAccessConfig.IPs {
 		desiredIPMap[ip.IP] = ip
 	}
 
-	// Bulk add new IPs
+	// Bulk add all missing IPs
 	toAdd := make([]svc.AddIPInput, 0)
 	for desiredIP := range desiredIPMap {
 		if !currentIPs[desiredIP] {
@@ -624,42 +605,47 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	}
 	if len(toAdd) > 0 {
 		c.logger.Info("Bulk adding new IPs to org API key access list",
-			"orgID", orgID, "apiKeyID", apiKeyID, "count", len(toAdd))
+			"orgID", orgID,
+			"apiKeyID", apiKeyID,
+			"count", len(toAdd))
+
 		if err := orgService.AddIPsToAPIKeyAccessList(ctx, orgID, apiKeyID, toAdd); err != nil {
-			c.logger.Info("Failed bulk add of new IPs", "error", err)
+			c.logger.Info("Failed bulk add of new IPs",
+				"error", err)
 			cr.Status.AtProvider.IPAccessError = errors.Wrap(err, "bulk add new IPs").Error()
 			_ = c.updateStatusWithRetry(ctx, cr)
 			return managed.ExternalUpdate{}, err
 		}
 	}
 
-	// Remove obsolete IPs
+	// Remove IPs that are no longer in desired spec
 	for currentIP := range currentIPs {
-		if _, ok := desiredIPMap[currentIP]; !ok {
+		if desiredIPMap[currentIP].IP == "" { // Not in desired map
 			c.logger.Info("Removing IP from org API key access list",
-				"orgID", orgID, "apiKeyID", apiKeyID, "ip", currentIP)
-			if err := orgService.RemoveIPFromAPIKeyAccessList(ctx, orgID, apiKeyID, currentIP); err != nil {
-				c.logger.Info("Failed to remove IP (continuing)", "ip", currentIP, "error", err)
+				"orgID", orgID,
+				"apiKeyID", apiKeyID,
+				"ip", currentIP)
+
+			err := orgService.RemoveIPFromAPIKeyAccessList(ctx, orgID, apiKeyID, currentIP)
+			if err != nil {
+				c.logger.Info("Failed to remove IP (continuing with others)",
+					"ip", currentIP,
+					"error", err)
+				// Continue removing other IPs even if one fails
 			}
 		}
 	}
 
-	// Update status
-	provisioned := make([]v1alpha1.IPAccessEntry, 0, len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
-	now := metav1.Now()
-	for _, desired := range cr.Spec.ForProvider.NetworkAccessConfig.IPs {
-		entry := desired
-		if entry.CIDRBlock == "" {
-			entry.CIDRBlock = entry.IP + "/32"
-		}
-		if entry.CreatedAt == nil {
-			entry.CreatedAt = &now
-		}
-		provisioned = append(provisioned, entry)
+	// Update status with final provisioned list
+	provisionedIPs := make([]v1alpha1.IPAccessEntry, 0, len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
+	for _, desiredIP := range cr.Spec.ForProvider.NetworkAccessConfig.IPs {
+		provisionedIPs = append(provisionedIPs, desiredIP)
 	}
-	cr.Status.AtProvider.ProvisionedIPs = provisioned
-	cr.Status.AtProvider.IPAccessEntryCount = len(provisioned)
+
+	cr.Status.AtProvider.ProvisionedIPs = provisionedIPs
+	cr.Status.AtProvider.IPAccessEntryCount = len(provisionedIPs)
 	cr.Status.AtProvider.IPAccessError = ""
+	now := metav1.Now()
 	cr.Status.AtProvider.LastIPAccessUpdate = &now
 
 	if err := c.updateStatusWithRetry(ctx, cr); err != nil {
@@ -667,21 +653,26 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	}
 
 	c.logger.Info("IP access update completed",
-		"orgID", orgID, "apiKeyID", apiKeyID, "currentIPCount", len(provisioned))
+		"orgID", orgID,
+		"apiKeyID", apiKeyID,
+		"currentIPCount", len(provisionedIPs))
 
 	return managed.ExternalUpdate{}, nil
 }
 
+// Delete implements managed.ExternalClient Delete.
+// Delete handles deletion of the external MongoDB Atlas Organization.
 func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 	cr := mg.(*v1alpha1.Organization)
 	orgID := meta.GetExternalName(cr)
 
-	// Cleanup IPs if requested
+	// Cleanup IP Access if enabled
 	if cr.Spec.ForProvider.NetworkAccessConfig.AutoCleanup &&
 		len(cr.Status.AtProvider.ProvisionedIPs) > 0 {
 
 		c.logger.Info("Cleaning up provisioned IPs during organization deletion",
-			"orgID", orgID, "ipCount", len(cr.Status.AtProvider.ProvisionedIPs))
+			"orgID", orgID,
+			"ipCount", len(cr.Status.AtProvider.ProvisionedIPs))
 
 		secretName := finalSecretName(cr)
 		orgCreds, err := c.awsClient.GetSecret(ctx, secretName)
@@ -690,15 +681,23 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 				PublicKey:  orgCreds.PublicKey,
 				PrivateKey: orgCreds.PrivateKey,
 			})
+
+			// Resolve API key ID
 			apiKeyID, _ := orgService.FindAPIKeyID(ctx, orgID, orgCreds.PublicKey, "")
+
 			if apiKeyID == "" {
-				c.logger.Info("Could not resolve API key ID for cleanup; skipping IP removals", "orgID", orgID)
+				c.logger.Info("Could not resolve API key ID for cleanup; skipping IP removals",
+					"orgID", orgID)
 			} else {
 				for _, ipEntry := range cr.Status.AtProvider.ProvisionedIPs {
-					if err := orgService.RemoveIPFromAPIKeyAccessList(ctx, orgID, apiKeyID, ipEntry.IP); err != nil {
-						c.logger.Info("Failed to remove IP during cleanup (continuing)", "ip", ipEntry.IP, "error", err)
+					err := orgService.RemoveIPFromAPIKeyAccessList(ctx, orgID, apiKeyID, ipEntry.IP)
+					if err != nil {
+						c.logger.Info("Failed to remove IP during cleanup (continuing)",
+							"ip", ipEntry.IP,
+							"error", err)
 					} else {
-						c.logger.Info("Removed IP during cleanup", "ip", ipEntry.IP)
+						c.logger.Info("Removed IP during cleanup",
+							"ip", ipEntry.IP)
 					}
 				}
 			}
@@ -707,11 +706,12 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 		}
 	}
 
-	// If nothing external was created, just remove our finalizer and return.
+	// No orgID = Nothing created in Atlas → remove our finalizer immediately
 	if orgID == "" {
 		c.logger.Info("No external orgID present — removing finalizer")
 		latest := &v1alpha1.Organization{}
 		if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
+			// if not found, just return
 			if apierrors.IsNotFound(err) {
 				return nil
 			}
@@ -727,30 +727,46 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 	}
 
 	secretName := finalSecretName(cr)
-	c.logger.Info("Starting deletion flow", "name", cr.Name, "orgID", orgID, "secretName", secretName)
+	c.logger.Info("Starting deletion flow",
+		"name", cr.Name,
+		"orgID", orgID,
+		"secretName", secretName)
 
 	now := metav1.Now()
 	cr.Status.AtProvider.LastDeletionAttemptTime = &now
 	cr.Status.AtProvider.DeletionAttemptCount++
 	stateDeleting := v1alpha1.OrganizationStateDeleting
 	cr.Status.AtProvider.State = &stateDeleting
+
+	// Persist status update so attempts are visible in kubernetes; ignore error but log
 	if err := c.updateStatusWithRetry(ctx, cr); err != nil {
 		c.logger.Debug("warning: failed to persist deletion attempt status (continuing)", "error", err)
 	}
 
-	// Optional pre-verify
+	// Ensure API key has ORG_OWNER
+	if !containsRole(cr.Spec.ForProvider.APIKey.Roles, "ORG_OWNER") {
+		err := errors.New("API key does not have ORG_OWNER — cannot delete organization")
+		c.logger.Info("API key missing ORG_OWNER", "roles", cr.Spec.ForProvider.APIKey.Roles)
+		cr.Status.AtProvider.LastDeletionAttemptError = err.Error()
+		cr.SetConditions(xpv1.ReconcileError(err))
+		_ = c.updateStatusWithRetry(ctx, cr)
+		return err
+	}
+
+	// STEP 1 — Verify if already deleted
 	c.logger.Info("Checking if organization still exists", "orgID", orgID)
 	verifyErr := c.client.VerifyOrganizationDeletion(ctx, orgID)
 	if verifyErr == nil || svc.IsNotFoundError(verifyErr) {
 		c.logger.Info("Organization already deleted — performing cleanup")
 		return c.cleanupAWSSecretAfterDelete(ctx, cr, secretName, now)
 	}
+	// If verifyErr is transient/opaque we should treat as deleted
 	if isAtlasTransientOrOpaqueDeleteErr(verifyErr) {
 		c.logger.Info("Atlas verify returned transient/opaque error — treating as deleted", "orgID", orgID, "error", verifyErr)
 		return c.cleanupAWSSecretAfterDelete(ctx, cr, secretName, now)
 	}
 
-	// Use org-specific credentials to delete the org
+	// STEP 2 — Fetch org-level AWS secret (ORG owner API key)
 	c.logger.Info("Fetching org-specific AWS secret", "secretName", secretName)
 	orgCreds, err := c.awsClient.GetSecret(ctx, secretName)
 	if err != nil {
@@ -761,11 +777,13 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 		return errors.Wrap(err, "failed to fetch org AWS secret")
 	}
 
+	// Create org-scoped service
 	orgService := c.newServiceFn(svc.Credentials{
 		PublicKey:  orgCreds.PublicKey,
 		PrivateKey: orgCreds.PrivateKey,
 	})
 
+	// STEP 3 — Attempt deletion
 	c.logger.Info("Attempting to delete organization in Atlas", "orgID", orgID)
 	err = orgService.DeleteOrganization(ctx, orgID)
 
@@ -782,6 +800,7 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 		return errors.Wrap(err, "unauthorized delete attempt")
 
 	case err != nil:
+		// If Atlas returned opaque/transient error treat it as success and continue cleanup.
 		if isAtlasTransientOrOpaqueDeleteErr(err) {
 			c.logger.Info("Atlas returned transient/opaque delete error — treating as deleted and performing cleanup", "orgID", orgID, "error", err)
 			return c.cleanupAWSSecretAfterDelete(ctx, cr, secretName, now)
@@ -793,10 +812,11 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 		return errors.Wrap(err, "delete organization failed")
 	}
 
-	// Verify deletion
+	// STEP 4 — Confirm deletion success
 	c.logger.Info("Verifying deletion", "orgID", orgID)
 	verifyErr = orgService.VerifyOrganizationDeletion(ctx, orgID)
 	if verifyErr != nil {
+		// If verify returns transient/opaque error, treat as deleted (Atlas backend sometimes returns 0/500 while finalizing)
 		if isAtlasTransientOrOpaqueDeleteErr(verifyErr) {
 			c.logger.Info("Atlas verify returned transient/opaque error after delete — treating as deleted", "orgID", orgID, "error", verifyErr)
 			return c.cleanupAWSSecretAfterDelete(ctx, cr, secretName, now)
@@ -807,6 +827,7 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 		return verifyErr
 	}
 
+	// STEP 5 — Cleanup AWS secret & remove finalizer(s)
 	return c.cleanupAWSSecretAfterDelete(ctx, cr, secretName, now)
 }
 
@@ -819,16 +840,20 @@ func (c *external) cleanupAWSSecretAfterDelete(
 
 	c.logger.Info("Cleanup: deleting AWS secret", "secretName", secretName)
 
+	// Delete secret (ignore not-found). Record any error in status but continue.
 	if delErr := c.awsClient.DeleteSecret(ctx, secretName, true); delErr != nil {
 		c.logger.Info("AWS Secret deletion returned error (continuing)", "error", delErr)
 		cr.Status.AtProvider.LastDeletionAttemptError = delErr.Error()
 		_ = c.updateStatusWithRetry(ctx, cr)
 	} else {
+		// clear last deletion attempt error if delete succeeded
 		cr.Status.AtProvider.LastDeletionAttemptError = ""
 	}
 
+	// Remove our custom finalizer and Crossplane's managed finalizer so CR can be removed.
 	latest := &v1alpha1.Organization{}
 	if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
+		// If the object can't be fetched, return the error so the reconciler will requeue.
 		return errors.Wrap(err, "re-get before removing finalizers")
 	}
 
@@ -837,14 +862,17 @@ func (c *external) cleanupAWSSecretAfterDelete(
 		meta.RemoveFinalizer(latest, FinalizerOrganizationCleanup)
 		changed = true
 	}
+	// Remove crossplane managed finalizer only when we're confident cleanup is done.
 	if meta.FinalizerExists(latest, crossplaneManagedFinalizer) {
 		meta.RemoveFinalizer(latest, crossplaneManagedFinalizer)
 		changed = true
 	}
 
 	if changed {
+		// persist metadata change
 		if err := c.kube.Update(ctx, latest); err != nil {
 			if apierrors.IsConflict(err) {
+				// retry once after re-get
 				if err2 := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err2 == nil {
 					if meta.FinalizerExists(latest, FinalizerOrganizationCleanup) {
 						meta.RemoveFinalizer(latest, FinalizerOrganizationCleanup)
@@ -864,7 +892,7 @@ func (c *external) cleanupAWSSecretAfterDelete(
 		}
 	}
 
-	// Update status to Deleted
+	// update status to mark deleted state
 	latest.Status = cr.Status
 	stateDeleted := v1alpha1.OrganizationStateDeleted
 	latest.Status.AtProvider.State = &stateDeleted
@@ -874,6 +902,7 @@ func (c *external) cleanupAWSSecretAfterDelete(
 
 	if err := c.kube.Status().Update(ctx, latest); err != nil {
 		if apierrors.IsConflict(err) {
+			// Try one more time after re-get
 			if err2 := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err2 == nil {
 				latest.Status = cr.Status
 				latest.Status.AtProvider.State = &stateDeleted
