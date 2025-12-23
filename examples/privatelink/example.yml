@@ -1,4 +1,4 @@
-apiVersion: connectivity.mongodb.allianz.io/v1alpha1
+apiVersion: connectivity.mongodb.swapnil.io/v1alpha1
 kind: AWSPrivateLink
 metadata:
   name: test-link

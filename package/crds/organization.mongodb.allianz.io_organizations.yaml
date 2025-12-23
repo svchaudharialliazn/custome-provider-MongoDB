@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: organizations.organization.mongodb.allianz.io
+  name: organizations.organization.mongodb.swapnil.io
 spec:
-  group: organization.mongodb.allianz.io
+  group: organization.mongodb.swapnil.io
   names:
     categories:
     - crossplane

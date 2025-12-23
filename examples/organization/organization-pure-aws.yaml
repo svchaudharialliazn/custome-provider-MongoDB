@@ -1,7 +1,7 @@
-apiVersion: organization.mongodb.allianz.io/v1alpha1
+apiVersion: organization.mongodb.swapnil.io/v1alpha1
 kind: Organization
 metadata:
-  name: swap-v7
+  name: swap-v8
   annotations:
     crossplane.io/external-name: "" # Will be populated by controller
 spec:
@@ -15,7 +15,7 @@ spec:
     # ELIMINATES ALL Kubernetes secret references
     awsSecretsConfig:
       region: "eu-central-1"
-      secretName: "swap-v7" # Optional, auto-generated if not specified
+      secretName: "swap-v8" # Optional, auto-generated if not specified
       kmsKeyId: "arn:aws:kms:eu-central-1:198927051560:key/50aed21c-4e38-4e62-9907-f35911304563" # Optional
   providerConfigRef:
     name: atlas-provider-aws-only

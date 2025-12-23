@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package v1alpha1 contains the organization resources of the mongodb provider.
 // +kubebuilder:object:generate=true  
-// +groupName=organization.mongodb.allianz.io
+// +groupName=organization.mongodb.swapnil.io
 // +versionName=v1alpha1
 package v1alpha1
 
@@ -27,7 +27,7 @@ import (
 
 // Package type metadata.
 const (
-	Group   = "organization.mongodb.allianz.io"
+	Group   = "organization.mongodb.swapnil.io"
 	Version = "v1alpha1"
 )
 

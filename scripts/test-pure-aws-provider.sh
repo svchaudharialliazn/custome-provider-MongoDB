@@ -44,7 +44,7 @@ echo "CRDs applied successfully"
 # Step 5: Apply ProviderConfig
 echo -e "\n5. Applying ProviderConfig..."
 cat <<EOF | kubectl apply -f -
-apiVersion: v1alpha1.mongodb.allianz.io/v1alpha1
+apiVersion: v1alpha1.mongodb.swapnil.io/v1alpha1
 kind: ProviderConfig
 metadata:
   name: atlas-provider-aws-only
@@ -71,7 +71,7 @@ sleep 5
 # Step 8: Apply Organization resource
 echo -e "\n8. Creating Organization resource..."
 cat <<EOF | kubectl apply -f -
-apiVersion: organization.mongodb.allianz.io/v1alpha1
+apiVersion: organization.mongodb.swapnil.io/v1alpha1
 kind: Organization
 metadata:
   name: test-org-pure-aws

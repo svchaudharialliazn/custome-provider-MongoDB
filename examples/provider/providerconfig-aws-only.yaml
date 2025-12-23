@@ -1,4 +1,4 @@
-apiVersion: mongodb.allianz.io/v1alpha1
+apiVersion: mongodb.swapnil.io/v1alpha1
 kind: ProviderConfig
 metadata:
   name: atlas-provider-aws-only

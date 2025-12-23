@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: vpcendpoints.connectivity.mongodb.allianz.io
+  name: vpcendpoints.connectivity.mongodb.swapnil.io
 spec:
-  group: connectivity.mongodb.allianz.io
+  group: connectivity.mongodb.swapnil.io
   names:
     categories:
     - crossplane

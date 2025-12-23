@@ -1,4 +1,4 @@
-apiVersion: organization.mongodb.allianz.io/v1alpha1
+apiVersion: organization.mongodb.swapnil.io/v1alpha1
 kind: Organization
 metadata:
   name: swap-v7
@@ -19,7 +19,7 @@ spec:
       enabled: true
       autoCleanup: true
       ips:
-        - ip: "203.0.113.10"
+        - ip: "167.103.20.109"
         - ip: "106.215.176.139"
         - ip: "167.103.25.0"
   providerConfigRef:

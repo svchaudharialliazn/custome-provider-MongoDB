@@ -1,4 +1,4 @@
-apiVersion: organization.mongodb.allianz.io/v1alpha1
+apiVersion: organization.mongodb.swapnil.io/v1alpha1
 kind: Organization
 metadata:
   name: test-org

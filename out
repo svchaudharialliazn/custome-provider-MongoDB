@@ -63,9 +63,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
   creationTimestamp: null
-  name: vpcendpoints.connectivity.mongodb.allianz.io
+  name: vpcendpoints.connectivity.mongodb.swapnil.io
 spec:
-  group: connectivity.mongodb.allianz.io
+  group: connectivity.mongodb.swapnil.io
   names:
     categories:
     - crossplane
@@ -440,9 +440,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
   creationTimestamp: null
-  name: providerconfigs.mongodb.allianz.io
+  name: providerconfigs.mongodb.swapnil.io
 spec:
-  group: mongodb.allianz.io
+  group: mongodb.swapnil.io
   names:
     categories:
     - crossplane
@@ -576,9 +576,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
   creationTimestamp: null
-  name: providerconfigusages.mongodb.allianz.io
+  name: providerconfigusages.mongodb.swapnil.io
 spec:
-  group: mongodb.allianz.io
+  group: mongodb.swapnil.io
   names:
     categories:
     - crossplane
@@ -686,9 +686,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
   creationTimestamp: null
-  name: storeconfigs.mongodb.allianz.io
+  name: storeconfigs.mongodb.swapnil.io
 spec:
-  group: mongodb.allianz.io
+  group: mongodb.swapnil.io
   names:
     categories:
     - crossplane
@@ -1049,9 +1049,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
   creationTimestamp: null
-  name: organizations.organization.mongodb.allianz.io
+  name: organizations.organization.mongodb.swapnil.io
 spec:
-  group: organization.mongodb.allianz.io
+  group: organization.mongodb.swapnil.io
   names:
     categories:
     - crossplane
