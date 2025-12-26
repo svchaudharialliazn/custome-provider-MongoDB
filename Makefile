@@ -57,7 +57,7 @@ generate: #$(CONTROLLER_GEN) ## Generate code (deepcopy, CRDs, etc.)
 	@echo "Generating deepcopy methods..."
 	$(CONTROLLER_GEN) object:headerFile="./hack/boilerplate.go.txt" paths="./apis/..."
 	@echo "Generating CRDs..."
-	$(CONTROLLER_GEN) crd:allowDangerousTypes=true paths="./apis/..." output:crd:artifacts:config=$(CRD_DIR)
+	$(CONTROLLER_GEN) crd:allowDangerousTypes=true paths=./apis/connectivity/v1alpha1  paths=./apis/organization/v1alpha1   paths=./apis/v1alpha1 output:crd:artifacts:config=$(CRD_DIR)
 	@echo "Cleaning up generated CRDs..."
 	@find $(CRD_DIR) -type f -name '*.yaml' -exec sed -i.bak 's/storedVersions: null/storedVersions: []/g' {} \; -exec rm {}.bak \;
 

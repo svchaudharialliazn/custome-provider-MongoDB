@@ -4,4 +4,4 @@ metadata:
   name: swap-provider-mongodb
 spec:
   controller:
-    image: docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.4
+    image: docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.9

@@ -19,7 +19,6 @@ package main
 
 import (
 	"context"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -29,9 +28,8 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
-	crzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
@@ -46,28 +44,9 @@ import (
 	"github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/controller/features"
 )
 
-// init sets the controller-runtime root logger as early as possible so no
-// internal components start before a logger is configured.
-func init() {
-	// Default to dev logging when DEBUG or LOG_DEV environment variables are set.
-	dev := os.Getenv("DEBUG") == "true" || os.Getenv("LOG_DEV") == "1"
-
-	zopts := crzap.Options{
-		Development: dev,
-		TimeEncoder: zapcore.ISO8601TimeEncoder,
-	}
-	zl := crzap.New(crzap.UseFlagOptions(&zopts))
-
-	// Set controller-runtime global logger.
-	ctrl.SetLogger(zl)
-
-	// Forward klog (client-go) to the same logr sink so all client-go messages show in pod logs.
-	klog.SetLogger(zl)
-}
-
-// UseISO8601 sets the logger to use ISO8601 timestamp format when building via flags.
-func UseISO8601() crzap.Opts {
-	return func(o *crzap.Options) {
+// UseISO8601 sets the logger to uses ISO8601 timestamp format
+func UseISO8601() zap.Opts {
+	return func(o *zap.Options) {
 		o.TimeEncoder = zapcore.ISO8601TimeEncoder
 	}
 }
@@ -87,10 +66,14 @@ func main() {
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
-	// Build a Crossplane logger backed by controller-runtime logr.
-	// Note: ctrl.SetLogger was already called in init(); we just reuse it here.
-	zl := crzap.New(crzap.UseDevMode(*debug), UseISO8601())
+	zl := zap.New(zap.UseDevMode(*debug), UseISO8601())
 	log := logging.NewLogrLogger(zl.WithName("provider-mongodb"))
+	if *debug {
+		// The controller-runtime runs with a no-op logger by default. It is
+		// *very* verbose even at info level, so we only provide it a real
+		// logger when we're running in debug mode.
+		ctrl.SetLogger(zl)
+	}
 
 	cfg, err := ctrl.GetConfig()
 	kingpin.FatalIfError(err, "Cannot get API server rest config")
@@ -98,13 +81,18 @@ func main() {
 	mgr, err := ctrl.NewManager(ratelimiter.LimitRESTConfig(cfg, *maxReconcileRate), ctrl.Options{
 		SyncPeriod: syncInterval,
 
-		// Use Leases only with longer durations to avoid leader loss under load.
+		// controller-runtime uses both ConfigMaps and Leases for leader
+		// election by default. Leases expire after 15 seconds, with a
+		// 10 second renewal deadline. We've observed leader loss due to
+		// renewal deadlines being exceeded when under high load - i.e.
+		// hundreds of reconciles per second and ~200rps to the API
+		// server. Switching to Leases only and longer leases appears to
+		// alleviate this.
 		LeaderElection:             *leaderElection,
 		LeaderElectionID:           "crossplane-leader-election-provider-mongodb",
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
 		LeaseDuration:              func() *time.Duration { d := 60 * time.Second; return &d }(),
 		RenewDeadline:              func() *time.Duration { d := 50 * time.Second; return &d }(),
-		HealthProbeBindAddress:     ":8081",
 	})
 	kingpin.FatalIfError(err, "Cannot create controller manager")
 	kingpin.FatalIfError(apis.AddToScheme(mgr.GetScheme()), "Cannot add App Gateway APIs to scheme")
@@ -127,6 +115,8 @@ func main() {
 				Name: "default",
 			},
 			Spec: v1alpha1.StoreConfigSpec{
+				// NOTE(turkenh): We only set required spec and expect optional
+				// ones to properly be initialized with CRD level default values.
 				SecretStoreConfig: xpv1.SecretStoreConfig{
 					DefaultScope: *namespace,
 				},
@@ -135,11 +125,5 @@ func main() {
 	}
 
 	kingpin.FatalIfError(gateway.Setup(mgr, o), "Cannot setup App Gateway controllers")
-
-	// Optional health/ready probes to integrate with k8s health endpoints.
-	_ = mgr.AddHealthzCheck("healthz", func(_ *http.Request) error { return nil })
-	_ = mgr.AddReadyzCheck("readyz", func(_ *http.Request) error { return nil })
-
-	log.Info("Starting controller manager")
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
 }

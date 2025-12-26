@@ -18,7 +18,7 @@ spec:
         spec:
           containers:
           - name: package-runtime
-            image: index.docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.0
+            image: docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.9
             imagePullPolicy: IfNotPresent
             env:
               - name: AWS_DEFAULT_REGION

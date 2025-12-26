@@ -1,0 +1,66 @@
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: swap-provider-runtime
+spec:
+  deploymentTemplate:
+    metadata:
+      labels:
+        app: swap-provider-mongodb
+    spec:
+      selector:
+        matchLabels:
+          app: swap-provider-mongodb
+      template:
+        metadata:
+          labels:
+            app: swap-provider-mongodb
+        spec:
+          volumes:
+            - name: corp-ca
+              secret:
+                secretName: corp-ca
+          containers:
+            - name: package-runtime
+              image: docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.9
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: AWS_DEFAULT_REGION
+                  value: eu-central-1
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-creds
+                      key: aws_access_key_id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-creds
+                      key: aws_secret_access_key
+                - name: AWS_SESSION_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-creds
+                      key: aws_session_token
+                # Point Go TLS to the mounted corporate CA bundle
+                - name: SSL_CERT_FILE
+                  value: /etc/ssl/certs/corp-bundle.pem
+              volumeMounts:
+                # Mount corporate CA bundle at a fixed path (used by SSL_CERT_FILE)
+                - name: corp-ca
+                  mountPath: /etc/ssl/certs/corp-bundle.pem
+                  subPath: corp-bundle.pem
+                  readOnly: true
+                # Also mount over common system bundle locations (optional)
+                - name: corp-ca
+                  mountPath: /etc/ssl/certs/ca-certificates.crt
+                  subPath: corp-bundle.pem
+                  readOnly: true
+                - name: corp-ca
+                  mountPath: /etc/ssl/cert.pem
+                  subPath: corp-bundle.pem
+                  readOnly: true
+                - name: corp-ca
+                  mountPath: /etc/pki/tls/certs/ca-bundle.crt
+                  subPath: corp-bundle.pem
+                  readOnly: true
