@@ -1,0 +1,222 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: compositeorganizations.organization.mongodb.swapnil.io
+spec:
+  group: organization.mongodb.swapnil.io
+  names:
+    kind: CompositeOrganization
+    plural: compositeorganizations
+  claimNames:
+    kind: OrganizationClaim
+    plural: organizationclaims
+  connectionSecretKeys:
+    - publicKey
+    - privateKey
+    - secretARN
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                compositionSelector:
+                  type: object
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                compositionRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                parameters:
+                  type: object
+                  properties:
+                    ownerID:
+                      type: string
+                    apiKey:
+                      type: object
+                      properties:
+                        description: { type: string }
+                        roles:
+                          type: array
+                          items: { type: string }
+                      required: [description, roles]
+                    awsSecretsConfig:
+                      type: object
+                      properties:
+                        region: { type: string }
+                        secretName: { type: string }
+                        kmsKeyId: { type: string }
+                      required: [region]
+                    networkAccessConfig:
+                      type: object
+                      properties:
+                        enabled: { type: boolean }
+                        autoCleanup: { type: boolean }
+                        ips:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              ip: { type: string }
+                              cidrBlock: { type: string }
+                              comment: { type: string }
+                            required: [ip]
+                      required: [enabled, autoCleanup]
+                    providerConfigRefName:
+                      type: string
+                writeConnectionSecretToRef:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    namespace: { type: string }
+                  required: [name, namespace]
+              required: [parameters]
+            status:
+              type: object
+              properties:
+                atProvider:
+                  type: object
+                  properties:
+                    orgID: { type: string }
+                    orgName: { type: string }
+                    state: { type: string }
+                    secretName: { type: string }
+                    secretARN: { type: string }
+                    apiKeyRoles:
+                      type: array
+                      items: { type: string }
+                    ipAccessEntryCount: { type: integer }
+                    ipAccessError: { type: string }
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      lastTransitionTime: { type: string, format: date-time }
+                      message: { type: string }
+                      reason: { type: string }
+                      status: { type: string }
+                      type: { type: string }
+                    required: [lastTransitionTime, reason, status, type]
+
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: organization-mongodb
+  labels:
+    provider: mongodb
+    type: organization
+spec:
+  compositeTypeRef:
+    apiVersion: organization.mongodb.swapnil.io/v1alpha1
+    kind: CompositeOrganization
+  resources:
+    - name: managed-organization
+      base:
+        apiVersion: organization.mongodb.swapnil.io/v1alpha1
+        kind: Organization
+        metadata:
+          labels:
+            managed-by: composition
+        spec:
+          forProvider: {}
+          providerConfigRef:
+            name: default
+          deletionPolicy: Delete
+          # Managed resource publishes its secret to crossplane-system
+          writeConnectionSecretToRef:
+            name: ""                  # patched below
+            namespace: crossplane-system
+      patches:
+        # 1) Name the managed resource from XR name, then override with Claim name if present
+        - fromFieldPath: "metadata.name"
+          toFieldPath: "metadata.name"
+        - fromFieldPath: "metadata.labels[crossplane.io/claim-name]"
+          toFieldPath: "metadata.name"
+          policy:
+            fromFieldPath: Optional
+
+        # 2) Default the AWS Secrets Manager secretName to Claim/XR name
+        #    (this runs BEFORE the explicit parameter patch so the parameter can overwrite it)
+        - fromFieldPath: "metadata.name"
+          toFieldPath: "spec.forProvider.awsSecretsConfig.secretName"
+
+        # 3) XR params -> managed spec.forProvider
+        - fromFieldPath: "spec.parameters.ownerID"
+          toFieldPath: "spec.forProvider.ownerID"
+        - fromFieldPath: "spec.parameters.apiKey.description"
+          toFieldPath: "spec.forProvider.apiKey.description"
+        - fromFieldPath: "spec.parameters.apiKey.roles"
+          toFieldPath: "spec.forProvider.apiKey.roles"
+        - fromFieldPath: "spec.parameters.awsSecretsConfig.region"
+          toFieldPath: "spec.forProvider.awsSecretsConfig.region"
+        # Explicit parameter wins and will overwrite the default set above if provided
+        - fromFieldPath: "spec.parameters.awsSecretsConfig.secretName"
+          toFieldPath: "spec.forProvider.awsSecretsConfig.secretName"
+          policy: { fromFieldPath: Optional }
+        - fromFieldPath: "spec.parameters.awsSecretsConfig.kmsKeyId"
+          toFieldPath: "spec.forProvider.awsSecretsConfig.kmsKeyId"
+          policy: { fromFieldPath: Optional }
+        - fromFieldPath: "spec.parameters.networkAccessConfig.enabled"
+          toFieldPath: "spec.forProvider.networkAccessConfig.enabled"
+          policy: { fromFieldPath: Optional }
+        - fromFieldPath: "spec.parameters.networkAccessConfig.autoCleanup"
+          toFieldPath: "spec.forProvider.networkAccessConfig.autoCleanup"
+          policy: { fromFieldPath: Optional }
+        - fromFieldPath: "spec.parameters.networkAccessConfig.ips"
+          toFieldPath: "spec.forProvider.networkAccessConfig.ips"
+          policy: { fromFieldPath: Optional }
+
+        # 4) ProviderConfigRef from XR param
+        - fromFieldPath: "spec.parameters.providerConfigRefName"
+          toFieldPath: "spec.providerConfigRef.name"
+
+        # 5) Ensure the managed connection secret name equals Claim/XR name
+        - fromFieldPath: "metadata.name"
+          toFieldPath: "spec.writeConnectionSecretToRef.name"
+        - fromFieldPath: "metadata.labels[crossplane.io/claim-name]"
+          toFieldPath: "spec.writeConnectionSecretToRef.name"
+          policy:
+            fromFieldPath: Optional
+
+        # 6) Patch selected status fields back to XR
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.orgID"
+          toFieldPath: "status.atProvider.orgID"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.orgName"
+          toFieldPath: "status.atProvider.orgName"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.state"
+          toFieldPath: "status.atProvider.state"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.secretName"
+          toFieldPath: "status.atProvider.secretName"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.secretARN"
+          toFieldPath: "status.atProvider.secretARN"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.apiKeyRoles"
+          toFieldPath: "status.atProvider.apiKeyRoles"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.ipAccessEntryCount"
+          toFieldPath: "status.atProvider.ipAccessEntryCount"
+
+      connectionDetails:
+        - fromConnectionSecretKey: publicKey
+          name: publicKey
+        - fromConnectionSecretKey: privateKey
+          name: privateKey
+        - fromConnectionSecretKey: secretARN
+          name: secretARN

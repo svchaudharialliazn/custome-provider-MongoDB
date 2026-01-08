@@ -1,0 +1,75 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: vpcendpoint-aws
+  labels:
+    provider: aws
+    type: vpcendpoint
+spec:
+  compositeTypeRef:
+    apiVersion: connectivity.mongodb.swapnil.io/v1alpha1
+    kind: CompositeVPCEndpoint
+  resources:
+    - name: managed-vpcendpoint
+      base:
+        apiVersion: connectivity.mongodb.swapnil.io/v1alpha1
+        kind: VPCEndpoint
+        metadata:
+          labels:
+            managed-by: composition
+        spec:
+          forProvider: {}
+          providerConfigRef:
+            name: default
+      patches:
+        # Map composite parameters -> managed forProvider
+        - fromCompositeFieldPath: "spec.parameters.vpcId"
+          toFieldPath: "spec.forProvider.vpcId"
+        - fromCompositeFieldPath: "spec.parameters.serviceName"
+          toFieldPath: "spec.forProvider.serviceName"
+        - fromCompositeFieldPath: "spec.parameters.accountId"
+          toFieldPath: "spec.forProvider.accountId"
+        - fromCompositeFieldPath: "spec.parameters.subnetIds"
+          toFieldPath: "spec.forProvider.subnetIds"
+        - fromCompositeFieldPath: "spec.parameters.securityGroupIds"
+          toFieldPath: "spec.forProvider.securityGroupIds"
+        - fromCompositeFieldPath: "spec.parameters.region"
+          toFieldPath: "spec.forProvider.region"
+        - fromCompositeFieldPath: "spec.parameters.ipAddressType"
+          toFieldPath: "spec.forProvider.ipAddressType"
+        - fromCompositeFieldPath: "spec.parameters.vpcEndpointType"
+          toFieldPath: "spec.forProvider.vpcEndpointType"
+        - fromCompositeFieldPath: "spec.parameters.policyDocument"
+          toFieldPath: "spec.forProvider.policyDocument"
+          policy:
+            fromFieldPath: Optional
+        - fromCompositeFieldPath: "spec.parameters.privateDnsEnabled"
+          toFieldPath: "spec.forProvider.privateDnsEnabled"
+          policy:
+            fromFieldPath: Optional
+        - fromCompositeFieldPath: "spec.parameters.tagSpecifications"
+          toFieldPath: "spec.forProvider.tagSpecifications"
+          policy:
+            fromFieldPath: Optional
+        # ProviderConfigRef name
+        - fromCompositeFieldPath: "spec.parameters.providerConfigRefName"
+          toFieldPath: "spec.providerConfigRef.name"
+        # Patch back selected status fields to XR status.atProvider
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.state"
+          toFieldPath: "status.atProvider.state"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.vpcEndpointId"
+          toFieldPath: "status.atProvider.vpcEndpointId"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.privateDnsName"
+          toFieldPath: "status.atProvider.privateDnsName"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.networkInterfaceIds"
+          toFieldPath: "status.atProvider.networkInterfaceIds"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.networkInterfaces"
+          toFieldPath: "status.atProvider.networkInterfaces"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.creationTimestamp"
+          toFieldPath: "status.atProvider.creationTimestamp"

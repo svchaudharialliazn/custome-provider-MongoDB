@@ -1,0 +1,163 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: compositevpcendpoints.connectivity.mongodb.swapnil.io
+spec:
+  group: connectivity.mongodb.swapnil.io
+  names:
+    kind: CompositeVPCEndpoint
+    plural: compositevpcendpoints
+  claimNames:
+    kind: VPCEndpointClaim
+    plural: vpcendpointclaims
+  connectionSecretKeys:
+    - vpcEndpointId
+    - privateDnsName
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          description: CompositeVPCEndpoint represents a composited AWS VPC Endpoint.
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: Desired state of the CompositeVPCEndpoint.
+              properties:
+                # Allow selecting a Composition by labels
+                compositionSelector:
+                  type: object
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                # Alternatively, allow direct reference (optional)
+                compositionRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                # Parameters to configure the underlying managed VPCEndpoint
+                parameters:
+                  type: object
+                  description: Parameters mapped to the managed VPCEndpoint spec.forProvider and providerConfigRef.name.
+                  properties:
+                    vpcId:
+                      type: string
+                    serviceName:
+                      type: string
+                    accountId:
+                      type: string
+                    subnetIds:
+                      type: array
+                      items:
+                        type: string
+                    securityGroupIds:
+                      type: array
+                      items:
+                        type: string
+                    region:
+                      type: string
+                    ipAddressType:
+                      type: string
+                    vpcEndpointType:
+                      type: string
+                    policyDocument:
+                      type: string
+                    privateDnsEnabled:
+                      type: boolean
+                    tagSpecifications:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    providerConfigRefName:
+                      type: string
+                  required:
+                    - vpcId
+                    - serviceName
+                    - accountId
+                    - subnetIds
+                    - securityGroupIds
+                    - region
+                    - ipAddressType
+                    - vpcEndpointType
+                # Optional publishing of connection details
+                writeConnectionSecretToRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                    - name
+                    - namespace
+              required:
+                - parameters
+            status:
+              type: object
+              description: Observed state surfaced from the managed VPCEndpoint.
+              properties:
+                atProvider:
+                  type: object
+                  properties:
+                    state:
+                      type: string
+                    vpcEndpointId:
+                      type: string
+                    privateDnsName:
+                      type: string
+                    networkInterfaceIds:
+                      type: array
+                      items:
+                        type: string
+                    networkInterfaces:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          networkInterfaceId:
+                            type: string
+                          privateIp:
+                            type: string
+                          status:
+                            type: string
+                          subnetId:
+                            type: string
+                        required:
+                          - networkInterfaceId
+                          - privateIp
+                          - status
+                          - subnetId
+                    creationTimestamp:
+                      type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+                      reason:
+                        type: string
+                      status:
+                        type: string
+                      type:
+                        type: string
+                    required:
+                      - lastTransitionTime
+                      - reason
+                      - status
+                      - type

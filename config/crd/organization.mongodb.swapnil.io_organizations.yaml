@@ -123,6 +123,13 @@ spec:
                   networkAccessConfig:
                     description: IP Access configuration
                     properties:
+                      apiAccessListRequired:
+                        description: |-
+                          APIAccessListRequired enables Atlas organization-level enforcement:
+                          "Require IP Access List for the Atlas Administration API".
+                          When true, the controller will call PATCH /orgs/{orgId}/settings
+                          to set apiAccessListRequired: true after org creation.
+                        type: boolean
                       autoCleanup:
                         description: AutoCleanup determines if IPs should be removed
                           when org is deleted
@@ -135,18 +142,16 @@ spec:
                         description: IPs is the list of individual IP addresses to
                           whitelist
                         items:
-                          description: IPAccessEntry represents a single IP address
-                            entry in the access list
+                          description: ========== IP ACCESS TYPES ==========
                           properties:
                             cidrBlock:
                               description: |-
                                 CIDRBlock is the CIDR notation of the IP (always {IP}/32 for single IPs)
-                                Make this optional so it's not required in spec; controller will populate in status.
+                                Optional: controller will populate in status.
                               type: string
                             comment:
-                              description: |-
-                                Comment is an optional description of the IP access
-                                Example: "Jenkins CI Pipeline", "Production API Server"
+                              description: Comment is an optional description of the
+                                IP access
                               type: string
                             createdAt:
                               description: CreatedAt tracks when this IP was provisioned
@@ -383,6 +388,9 @@ spec:
                   Organization Observation (Status Fields)
                   ===============================================================
                 properties:
+                  apiAccessListRequired:
+                    description: Org-level enforcement status
+                    type: boolean
                   apiKeyRoles:
                     items:
                       type: string
@@ -400,6 +408,8 @@ spec:
                     type: string
                   deletionAttemptCount:
                     type: integer
+                  enforcementError:
+                    type: string
                   ipAccessEntryCount:
                     type: integer
                   ipAccessError:
@@ -412,6 +422,9 @@ spec:
                     description: Deletion tracking
                     format: date-time
                     type: string
+                  lastEnforcementToggleTime:
+                    format: date-time
+                    type: string
                   lastIPAccessUpdate:
                     format: date-time
                     type: string
@@ -422,18 +435,16 @@ spec:
                   provisionedIPs:
                     description: IP access status
                     items:
-                      description: IPAccessEntry represents a single IP address entry
-                        in the access list
+                      description: ========== IP ACCESS TYPES ==========
                       properties:
                         cidrBlock:
                           description: |-
                             CIDRBlock is the CIDR notation of the IP (always {IP}/32 for single IPs)
-                            Make this optional so it's not required in spec; controller will populate in status.
+                            Optional: controller will populate in status.
                           type: string
                         comment:
-                          description: |-
-                            Comment is an optional description of the IP access
-                            Example: "Jenkins CI Pipeline", "Production API Server"
+                          description: Comment is an optional description of the IP
+                            access
                           type: string
                         createdAt:
                           description: CreatedAt tracks when this IP was provisioned

@@ -1,0 +1,35 @@
+apiVersion: organization.mongodb.swapnil.io/v1alpha1
+kind: OrganizationClaim
+metadata:
+  name: swap-v7
+  namespace: default
+spec:
+  compositionSelector:
+    matchLabels:
+      provider: mongodb
+      type: organization
+  # XR/Claim parameters
+  parameters:
+    ownerID: "68933765952cea244d470efb"
+    apiKey:
+      description: "Pure AWS organization API key - no Kubernetes secrets"
+      roles:
+        - "ORG_OWNER"
+    awsSecretsConfig:
+      region: "eu-central-1"
+      secretName: "swap-v7"
+      kmsKeyId: "arn:aws:kms:eu-central-1:198927051560:key/50aed21c-4e38-4e62-9907-f35911304563"
+    networkAccessConfig:
+      enabled: true
+      autoCleanup: true
+      ips:
+        - ip: "167.103.20.109"
+        - ip: "106.215.176.139"
+        - ip: "167.103.25.0"
+    providerConfigRefName: atlas-provider-aws-only
+
+  # Explicitly set the XR/Claim connection secret name and namespace
+  # so it is constant (equals the org/claim name) and avoids any suffixes.
+  writeConnectionSecretToRef:
+    name: swap-v7
+    namespace: crossplane-system

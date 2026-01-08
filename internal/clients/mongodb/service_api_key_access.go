@@ -1,6 +1,5 @@
 // internal/clients/mongodb/service_api_key_access.go
-// NEW FILE: org API key–scoped access list helpers.
-
+// Org API key–scoped access list helpers.
 package mongodb
 
 import (
@@ -35,32 +34,18 @@ func (c *client) FindAPIKeyID(ctx context.Context, orgID, publicKey, _ string) (
 	return "", nil
 }
 
-// AddIPToAPIKeyAccessList adds a single IP to the org API key's access list.
-// Atlas expects an array of entries for POST.
 // AddIPsToAPIKeyAccessList bulk adds IPs to the org API key's access list in a single request.
-
+// IMPORTANT: For API-key access list, omit comment to avoid 400 from Atlas.
 func (c *client) AddIPsToAPIKeyAccessList(ctx context.Context, orgID, apiKeyID string, inputs []AddIPInput) error {
-
 	if orgID == "" || apiKeyID == "" {
-
 		return fmt.Errorf("orgID and apiKeyID cannot be empty")
-
 	}
-
 	endpoint := fmt.Sprintf("/orgs/%s/apiKeys/%s/accessList", url.PathEscape(orgID), url.PathEscape(apiKeyID))
-
 	payload := make([]map[string]any, 0, len(inputs))
-
 	for _, in := range inputs {
-
-		// IMPORTANT: For API-key access list, omit comment to avoid 400 from Atlas
-
 		payload = append(payload, map[string]any{"ipAddress": in.IP})
-
 	}
-
 	return c.makeRequest(ctx, http.MethodPost, endpoint, payload, nil)
-
 }
 
 // RemoveIPFromAPIKeyAccessList removes an IP from the org API key's access list.

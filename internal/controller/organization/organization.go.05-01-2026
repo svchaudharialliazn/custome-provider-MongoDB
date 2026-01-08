@@ -218,30 +218,6 @@ func (c *external) updateStatusWithRetry(ctx context.Context, obj *v1alpha1.Orga
 	return nil
 }
 
-// enableAPIAccessListRequired enables the "Require IP Access List for the Atlas Administration API"
-// setting on the organization using the v2 API endpoint.
-func (c *external) enableAPIAccessListRequired(
-	ctx context.Context,
-	orgID string,
-	apiKey svc.APIKeyPair,
-) error {
-	c.logger.Info("Enabling apiAccessListRequired for organization", "orgID", orgID)
-
-	// Use the org-specific API key credentials to update settings
-	orgService := c.newServiceFn(svc.Credentials{
-		PublicKey:  apiKey.PublicKey,
-		PrivateKey: apiKey.PrivateKey,
-	})
-
-	if err := orgService.SetOrgAdminAPIIPEnforcement(ctx, orgID, true); err != nil {
-		c.logger.Info("Failed to enable apiAccessListRequired", "orgID", orgID, "error", err)
-		return errors.Wrap(err, "failed to enable apiAccessListRequired")
-	}
-
-	c.logger.Info("Successfully enabled apiAccessListRequired", "orgID", orgID)
-	return nil
-}
-
 // provisionIPAccess adds desired IPs to the org API key access list using a single bulk POST.
 func (c *external) provisionIPAccess(
 	ctx context.Context,
@@ -564,9 +540,7 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 	stateActive := v1alpha1.OrganizationStateActive
 	cr.Status.AtProvider.State = &stateActive
 
-	// ============================================================
-	// NEW: Provision IP access FIRST (before enabling enforcement)
-	// ============================================================
+	// Provision API key–scoped IP access if requested
 	if cr.Spec.ForProvider.NetworkAccessConfig.Enabled && len(cr.Spec.ForProvider.NetworkAccessConfig.IPs) > 0 {
 		c.logger.Info("Provisioning IP access for new organization",
 			"orgID", org.ID, "ipCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
@@ -582,27 +556,6 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 			cr.Status.AtProvider.LastIPAccessUpdate = &now
 			cr.Status.AtProvider.IPAccessError = ""
 			c.logger.Info("IP access provisioning completed", "orgID", org.ID, "provisionedCount", len(provisionedIPs))
-		}
-	}
-
-	// ============================================================
-	// NEW: Enable apiAccessListRequired AFTER IPs are provisioned
-	// ============================================================
-	if cr.Spec.ForProvider.NetworkAccessConfig.APIAccessListRequired {
-		c.logger.Info("Enabling apiAccessListRequired for organization after IP provisioning",
-			"orgID", org.ID)
-
-		if err := c.enableAPIAccessListRequired(ctx, org.ID, apiKey); err != nil {
-			c.logger.Info("Failed to enable apiAccessListRequired (will retry on next reconcile)",
-				"orgID", org.ID, "error", err)
-			cr.Status.AtProvider.EnforcementError = err.Error()
-		} else {
-			enforced := true
-			cr.Status.AtProvider.APIAccessListRequired = &enforced
-			now := metav1.Now()
-			cr.Status.AtProvider.LastEnforcementToggleTime = &now
-			cr.Status.AtProvider.EnforcementError = ""
-			c.logger.Info("Successfully enabled apiAccessListRequired", "orgID", org.ID)
 		}
 	}
 
@@ -625,13 +578,19 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	if orgID == "" {
 		return managed.ExternalUpdate{}, nil
 	}
+	if !cr.Spec.ForProvider.NetworkAccessConfig.Enabled {
+		return managed.ExternalUpdate{}, nil
+	}
+
+	c.logger.Debug("Checking for IP access updates",
+		"orgID", orgID, "desiredIPCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
 
 	// Fetch org credentials from AWS SM (org-scoped API key)
 	secretName := finalSecretName(cr)
 	orgCreds, err := c.awsClient.GetSecret(ctx, secretName)
 	if err != nil {
-		c.logger.Info("Failed to fetch org credentials for update", "error", err)
-		return managed.ExternalUpdate{}, errors.Wrap(err, "failed to fetch org credentials for update")
+		c.logger.Info("Failed to fetch org credentials for IP update", "error", err)
+		return managed.ExternalUpdate{}, errors.Wrap(err, "failed to fetch org credentials for IP update")
 	}
 
 	orgService := c.newServiceFn(svc.Credentials{
@@ -639,119 +598,76 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 		PrivateKey: orgCreds.PrivateKey,
 	})
 
+	apiKeyID, err := orgService.FindAPIKeyID(ctx, orgID, orgCreds.PublicKey, "")
+	if err != nil || apiKeyID == "" {
+		c.logger.Info("Could not resolve organization API key ID for IP update; skipping",
+			"orgID", orgID, "error", err)
+		return managed.ExternalUpdate{}, nil
+	}
+
+	// Build sets
+	currentIPs := make(map[string]bool)
+	for _, ip := range cr.Status.AtProvider.ProvisionedIPs {
+		currentIPs[ip.IP] = true
+	}
+	desiredIPMap := make(map[string]v1alpha1.IPAccessEntry)
+	for _, ip := range cr.Spec.ForProvider.NetworkAccessConfig.IPs {
+		desiredIPMap[ip.IP] = ip
+	}
+
+	// Bulk add new IPs
+	toAdd := make([]svc.AddIPInput, 0)
+	for desiredIP := range desiredIPMap {
+		if !currentIPs[desiredIP] {
+			toAdd = append(toAdd, svc.AddIPInput{IP: desiredIP})
+		}
+	}
+	if len(toAdd) > 0 {
+		c.logger.Info("Bulk adding new IPs to org API key access list",
+			"orgID", orgID, "apiKeyID", apiKeyID, "count", len(toAdd))
+		if err := orgService.AddIPsToAPIKeyAccessList(ctx, orgID, apiKeyID, toAdd); err != nil {
+			c.logger.Info("Failed bulk add of new IPs", "error", err)
+			cr.Status.AtProvider.IPAccessError = errors.Wrap(err, "bulk add new IPs").Error()
+			_ = c.updateStatusWithRetry(ctx, cr)
+			return managed.ExternalUpdate{}, err
+		}
+	}
+
+	// Remove obsolete IPs
+	for currentIP := range currentIPs {
+		if _, ok := desiredIPMap[currentIP]; !ok {
+			c.logger.Info("Removing IP from org API key access list",
+				"orgID", orgID, "apiKeyID", apiKeyID, "ip", currentIP)
+			if err := orgService.RemoveIPFromAPIKeyAccessList(ctx, orgID, apiKeyID, currentIP); err != nil {
+				c.logger.Info("Failed to remove IP (continuing)", "ip", currentIP, "error", err)
+			}
+		}
+	}
+
+	// Update status
+	provisioned := make([]v1alpha1.IPAccessEntry, 0, len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
 	now := metav1.Now()
-	statusChanged := false
-
-	// ============================================================
-	// Handle apiAccessListRequired enforcement updates
-	// ============================================================
-	desiredEnforcement := cr.Spec.ForProvider.NetworkAccessConfig.APIAccessListRequired
-	currentEnforcement := cr.Status.AtProvider.APIAccessListRequired
-
-	// Check if we need to update enforcement setting
-	needsEnforcementUpdate := false
-	if currentEnforcement == nil {
-		needsEnforcementUpdate = desiredEnforcement // Only update if desired is true
-	} else if *currentEnforcement != desiredEnforcement {
-		needsEnforcementUpdate = true
-	}
-
-	if needsEnforcementUpdate {
-		c.logger.Info("Updating apiAccessListRequired setting",
-			"orgID", orgID, "desired", desiredEnforcement)
-
-		if err := orgService.SetOrgAdminAPIIPEnforcement(ctx, orgID, desiredEnforcement); err != nil {
-			c.logger.Info("Failed to update apiAccessListRequired", "orgID", orgID, "error", err)
-			cr.Status.AtProvider.EnforcementError = err.Error()
-			statusChanged = true
-		} else {
-			cr.Status.AtProvider.APIAccessListRequired = &desiredEnforcement
-			cr.Status.AtProvider.LastEnforcementToggleTime = &now
-			cr.Status.AtProvider.EnforcementError = ""
-			statusChanged = true
-			c.logger.Info("Successfully updated apiAccessListRequired",
-				"orgID", orgID, "enabled", desiredEnforcement)
+	for _, desired := range cr.Spec.ForProvider.NetworkAccessConfig.IPs {
+		entry := desired
+		if entry.CIDRBlock == "" {
+			entry.CIDRBlock = entry.IP + "/32"
 		}
-	}
-
-	// ============================================================
-	// Handle IP access updates (only if enabled)
-	// ============================================================
-	if cr.Spec.ForProvider.NetworkAccessConfig.Enabled {
-		c.logger.Debug("Checking for IP access updates",
-			"orgID", orgID, "desiredIPCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
-
-		apiKeyID, err := orgService.FindAPIKeyID(ctx, orgID, orgCreds.PublicKey, "")
-		if err != nil || apiKeyID == "" {
-			c.logger.Info("Could not resolve organization API key ID for IP update; skipping",
-				"orgID", orgID, "error", err)
-		} else {
-			// Build sets
-			currentIPs := make(map[string]bool)
-			for _, ip := range cr.Status.AtProvider.ProvisionedIPs {
-				currentIPs[ip.IP] = true
-			}
-			desiredIPMap := make(map[string]v1alpha1.IPAccessEntry)
-			for _, ip := range cr.Spec.ForProvider.NetworkAccessConfig.IPs {
-				desiredIPMap[ip.IP] = ip
-			}
-
-			// Bulk add new IPs
-			toAdd := make([]svc.AddIPInput, 0)
-			for desiredIP := range desiredIPMap {
-				if !currentIPs[desiredIP] {
-					toAdd = append(toAdd, svc.AddIPInput{IP: desiredIP})
-				}
-			}
-			if len(toAdd) > 0 {
-				c.logger.Info("Bulk adding new IPs to org API key access list",
-					"orgID", orgID, "apiKeyID", apiKeyID, "count", len(toAdd))
-				if err := orgService.AddIPsToAPIKeyAccessList(ctx, orgID, apiKeyID, toAdd); err != nil {
-					c.logger.Info("Failed bulk add of new IPs", "error", err)
-					cr.Status.AtProvider.IPAccessError = errors.Wrap(err, "bulk add new IPs").Error()
-					statusChanged = true
-				}
-			}
-
-			// Remove obsolete IPs
-			for currentIP := range currentIPs {
-				if _, ok := desiredIPMap[currentIP]; !ok {
-					c.logger.Info("Removing IP from org API key access list",
-						"orgID", orgID, "apiKeyID", apiKeyID, "ip", currentIP)
-					if err := orgService.RemoveIPFromAPIKeyAccessList(ctx, orgID, apiKeyID, currentIP); err != nil {
-						c.logger.Info("Failed to remove IP (continuing)", "ip", currentIP, "error", err)
-					}
-				}
-			}
-
-			// Update status
-			provisioned := make([]v1alpha1.IPAccessEntry, 0, len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
-			for _, desired := range cr.Spec.ForProvider.NetworkAccessConfig.IPs {
-				entry := desired
-				if entry.CIDRBlock == "" {
-					entry.CIDRBlock = entry.IP + "/32"
-				}
-				if entry.CreatedAt == nil {
-					entry.CreatedAt = &now
-				}
-				provisioned = append(provisioned, entry)
-			}
-			cr.Status.AtProvider.ProvisionedIPs = provisioned
-			cr.Status.AtProvider.IPAccessEntryCount = len(provisioned)
-			cr.Status.AtProvider.IPAccessError = ""
-			cr.Status.AtProvider.LastIPAccessUpdate = &now
-			statusChanged = true
-
-			c.logger.Info("IP access update completed",
-				"orgID", orgID, "apiKeyID", apiKeyID, "currentIPCount", len(provisioned))
+		if entry.CreatedAt == nil {
+			entry.CreatedAt = &now
 		}
+		provisioned = append(provisioned, entry)
+	}
+	cr.Status.AtProvider.ProvisionedIPs = provisioned
+	cr.Status.AtProvider.IPAccessEntryCount = len(provisioned)
+	cr.Status.AtProvider.IPAccessError = ""
+	cr.Status.AtProvider.LastIPAccessUpdate = &now
+
+	if err := c.updateStatusWithRetry(ctx, cr); err != nil {
+		return managed.ExternalUpdate{}, errors.Wrap(err, "updating status after IP update")
 	}
 
-	if statusChanged {
-		if err := c.updateStatusWithRetry(ctx, cr); err != nil {
-			return managed.ExternalUpdate{}, errors.Wrap(err, "updating status after update")
-		}
-	}
+	c.logger.Info("IP access update completed",
+		"orgID", orgID, "apiKeyID", apiKeyID, "currentIPCount", len(provisioned))
 
 	return managed.ExternalUpdate{}, nil
 }

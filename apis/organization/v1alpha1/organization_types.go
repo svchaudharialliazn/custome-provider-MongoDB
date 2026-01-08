@@ -1,7 +1,6 @@
 // apis/organization/v1alpha1/organization_types.go
-// UPDATED: Make CIDRBlock optional to avoid CRD requiring it in spec.
-// Re-run controller-gen after updating to regenerate the CRD.
-
+// UPDATED: CIDRBlock optional; added APIAccessListRequired and LastEnforcementToggleTime.
+// Run controller-gen after updating to regenerate the CRD.
 package v1alpha1
 
 import (
@@ -28,19 +27,16 @@ type AWSSecretsManagerReference struct {
 	KMSKeyID *string `json:"kmsKeyId,omitempty"`
 }
 
-// ========== NEW IP ACCESS TYPES ==========
-
-// IPAccessEntry represents a single IP address entry in the access list
+// ========== IP ACCESS TYPES ==========
 type IPAccessEntry struct {
 	// IP is a single IPv4 address (e.g., "203.0.113.45")
 	IP string `json:"ip"`
 
 	// Comment is an optional description of the IP access
-	// Example: "Jenkins CI Pipeline", "Production API Server"
 	Comment *string `json:"comment,omitempty"`
 
 	// CIDRBlock is the CIDR notation of the IP (always {IP}/32 for single IPs)
-	// Make this optional so it's not required in spec; controller will populate in status.
+	// Optional: controller will populate in status.
 	CIDRBlock string `json:"cidrBlock,omitempty"`
 
 	// CreatedAt tracks when this IP was provisioned
@@ -57,6 +53,12 @@ type NetworkAccessConfig struct {
 
 	// AutoCleanup determines if IPs should be removed when org is deleted
 	AutoCleanup bool `json:"autoCleanup"`
+
+	// APIAccessListRequired enables Atlas organization-level enforcement:
+	// "Require IP Access List for the Atlas Administration API".
+	// When true, the controller will call PATCH /orgs/{orgId}/settings
+	// to set apiAccessListRequired: true after org creation.
+	APIAccessListRequired bool `json:"apiAccessListRequired,omitempty"`
 }
 
 // ===============================================================
@@ -98,6 +100,11 @@ type OrganizationObservation struct {
 
 	State     *string      `json:"state,omitempty"`     // PENDING | ACTIVE | DELETING | DELETED
 	DeletedAt *metav1.Time `json:"deletedAt,omitempty"` // Deletion timestamp
+
+	// Org-level enforcement status
+	APIAccessListRequired     *bool        `json:"apiAccessListRequired,omitempty"`
+	LastEnforcementToggleTime *metav1.Time `json:"lastEnforcementToggleTime,omitempty"`
+	EnforcementError          string       `json:"enforcementError,omitempty"`
 
 	// IP access status
 	ProvisionedIPs     []IPAccessEntry `json:"provisionedIPs,omitempty"`
