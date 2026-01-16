@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.20.0
   name: organizations.organization.mongodb.swapnil.io
 spec:
   group: organization.mongodb.swapnil.io
@@ -28,21 +28,24 @@ spec:
     - jsonPath: .status.atProvider.orgID
       name: ORG-ID
       type: string
-    - jsonPath: .status.atProvider.secretName
-      name: SECRET-NAME
-      type: string
-    - jsonPath: .status.atProvider.secretARN
-      name: SECRET-ARN
-      type: string
     - jsonPath: .status.atProvider.state
       name: STATE
       type: string
+    - jsonPath: .status.atProvider.deletionPhase
+      name: DEL-PHASE
+      priority: 1
+      type: string
+    - jsonPath: .status.atProvider.deletionAttemptCount
+      name: DEL-ATTEMPTS
+      priority: 1
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
+        description: Organization is the Schema for the organizations API
         properties:
           apiVersion:
             description: |-
@@ -62,10 +65,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              ===============================================================
-              Spec & Status
-              ===============================================================
+            description: OrganizationSpec defines the desired state of Organization
             properties:
               deletionPolicy:
                 default: Delete
@@ -82,16 +82,17 @@ spec:
                 - Delete
                 type: string
               forProvider:
-                description: |-
-                  ===============================================================
-                  Organization Parameters
-                  ===============================================================
+                description: OrganizationParameters defines the desired state of the
+                  Organization
                 properties:
                   apiKey:
+                    description: APIKey configuration for the organization
                     properties:
                       description:
+                        description: Description for the API key
                         type: string
                       roles:
+                        description: Roles assigned to the API key
                         items:
                           type: string
                         type: array
@@ -100,10 +101,8 @@ spec:
                     - roles
                     type: object
                   awsSecretsConfig:
-                    description: |-
-                      ===============================================================
-                      AWS Secrets Manager Configuration
-                      ===============================================================
+                    description: AWSSecretsConfig defines where to store the API key
+                      in AWS Secrets Manager
                     properties:
                       kmsKeyId:
                         description: Optional custom AWS KMS key.
@@ -121,7 +120,7 @@ spec:
                     - region
                     type: object
                   networkAccessConfig:
-                    description: IP Access configuration
+                    description: NetworkAccessConfig defines IP access provisioning
                     properties:
                       apiAccessListRequired:
                         description: |-
@@ -142,7 +141,8 @@ spec:
                         description: IPs is the list of individual IP addresses to
                           whitelist
                         items:
-                          description: ========== IP ACCESS TYPES ==========
+                          description: IPAccessEntry represents a single IP address
+                            in the access list
                           properties:
                             cidrBlock:
                               description: |-
@@ -169,6 +169,8 @@ spec:
                     - enabled
                     type: object
                   ownerID:
+                    description: OwnerID is the MongoDB Atlas user ID who will own
+                      the organization
                     type: string
                 required:
                 - apiKey
@@ -381,61 +383,114 @@ spec:
             - forProvider
             type: object
           status:
+            description: OrganizationStatus defines the observed state of Organization
             properties:
               atProvider:
-                description: |-
-                  ===============================================================
-                  Organization Observation (Status Fields)
-                  ===============================================================
+                description: OrganizationObservation contains the observed state of
+                  the Organization
                 properties:
                   apiAccessListRequired:
-                    description: Org-level enforcement status
+                    description: APIAccessListRequired indicates whether IP access
+                      list is required
                     type: boolean
                   apiKeyRoles:
+                    description: APIKeyRoles are the roles assigned to the API key
                     items:
                       type: string
                     type: array
                   createdAt:
+                    description: CreatedAt is when the organization was created
                     format: date-time
                     type: string
                   createdWithAPIKeyID:
+                    description: CreatedWithAPIKeyID is the masked API key ID used
+                      for creation
                     type: string
                   createdWithCredentialSource:
-                    description: API key audit fields
+                    description: CreatedWithCredentialSource indicates the credential
+                      source used
                     type: string
                   deletedAt:
+                    description: DeletedAt is the timestamp when the organization
+                      was deleted
                     format: date-time
                     type: string
                   deletionAttemptCount:
+                    description: DeletionAttemptCount tracks how many times deletion
+                      has been attempted
                     type: integer
-                  enforcementError:
+                  deletionPhase:
+                    description: DeletionPhase tracks the current phase of the deletion
+                      state machine
                     type: string
+                  dependenciesChecked:
+                    description: DependenciesChecked indicates whether dependencies
+                      have been checked
+                    type: boolean
+                  enforcementDisabledAt:
+                    description: EnforcementDisabledAt is when apiAccessListRequired
+                      was disabled during deletion
+                    format: date-time
+                    type: string
+                  enforcementError:
+                    description: EnforcementError contains any error from enforcement
+                      operations
+                    type: string
+                  forceDeleteAfterFailures:
+                    description: ForceDeleteAfterFailures indicates deletion failed
+                      and force delete is available
+                    type: boolean
                   ipAccessEntryCount:
+                    description: IPAccessEntryCount is the number of IPs in the access
+                      list
                     type: integer
                   ipAccessError:
+                    description: IPAccessError contains any error from IP access list
+                      operations
                     type: string
+                  ipsCleanedUp:
+                    description: IPsCleanedUp indicates whether IPs have been cleaned
+                      up during deletion
+                    type: boolean
                   kmsKeyId:
+                    description: KMSKeyID is the KMS key used to encrypt the secret
                     type: string
                   lastDeletionAttemptError:
+                    description: LastDeletionAttemptError contains the error message
+                      from the last deletion attempt
                     type: string
                   lastDeletionAttemptTime:
-                    description: Deletion tracking
+                    description: LastDeletionAttemptTime is the timestamp of the last
+                      deletion attempt
                     format: date-time
                     type: string
                   lastEnforcementToggleTime:
+                    description: LastEnforcementToggleTime is when apiAccessListRequired
+                      was last changed
                     format: date-time
                     type: string
                   lastIPAccessUpdate:
+                    description: LastIPAccessUpdate is the timestamp of the last IP
+                      access list update
+                    format: date-time
+                    type: string
+                  lastRateLimitHitTime:
+                    description: LastRateLimitHitTime is when the last rate limit
+                      (429) was encountered
                     format: date-time
                     type: string
                   orgID:
+                    description: OrgID is the MongoDB Atlas organization ID
                     type: string
                   orgName:
+                    description: OrgName is the name of the organization
                     type: string
                   provisionedIPs:
-                    description: IP access status
+                    description: ProvisionedIPs is the list of IPs provisioned to
+                      the access list
                     items:
-                      description: ========== IP ACCESS TYPES ==========
+                      description: IPAccessEntry represents a single IP address in
+                        the access list
                       properties:
                         cidrBlock:
                           description: |-
@@ -458,10 +513,14 @@ spec:
                       type: object
                     type: array
                   secretARN:
+                    description: SecretARN is the ARN of the AWS secret
                     type: string
                   secretName:
+                    description: SecretName is the name of the AWS secret
                     type: string
                   state:
+                    description: State represents the current state (PENDING, ACTIVE,
+                      DELETING, DELETED)
                     type: string
                 type: object
               conditions:

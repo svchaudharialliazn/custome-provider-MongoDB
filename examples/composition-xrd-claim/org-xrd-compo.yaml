@@ -25,89 +25,112 @@ spec:
             spec:
               type: object
               properties:
-                compositionSelector:
-                  type: object
-                  properties:
-                    matchLabels:
-                      type: object
-                      additionalProperties:
-                        type: string
-                compositionRef:
-                  type: object
-                  properties:
-                    name:
-                      type: string
                 parameters:
                   type: object
+                  required: [ownerID, apiKey, networkAccessConfig, providerConfigRefName]
                   properties:
                     ownerID:
                       type: string
                     apiKey:
                       type: object
+                      required: [description, roles]
                       properties:
-                        description: { type: string }
+                        description:
+                          type: string
                         roles:
                           type: array
-                          items: { type: string }
-                      required: [description, roles]
+                          items:
+                            type: string
                     awsSecretsConfig:
                       type: object
-                      properties:
-                        region: { type: string }
-                        secretName: { type: string }
-                        kmsKeyId: { type: string }
                       required: [region]
+                      properties:
+                        region:
+                          type: string
+                        secretName:
+                          type: string
+                        kmsKeyId:
+                          type: string
                     networkAccessConfig:
                       type: object
+                      required: [enabled, autoCleanup]
                       properties:
-                        enabled: { type: boolean }
-                        autoCleanup: { type: boolean }
+                        enabled:
+                          type: boolean
+                        autoCleanup:
+                          type: boolean
+                        apiAccessListRequired:
+                          type: boolean
                         ips:
                           type: array
                           items:
                             type: object
-                            properties:
-                              ip: { type: string }
-                              cidrBlock: { type: string }
-                              comment: { type: string }
                             required: [ip]
-                      required: [enabled, autoCleanup]
+                            properties:
+                              ip:
+                                type: string
+                              cidrBlock:
+                                type: string
+                              comment:
+                                type: string
                     providerConfigRefName:
                       type: string
-                writeConnectionSecretToRef:
-                  type: object
-                  properties:
-                    name: { type: string }
-                    namespace: { type: string }
-                  required: [name, namespace]
-              required: [parameters]
             status:
               type: object
               properties:
                 atProvider:
                   type: object
                   properties:
-                    orgID: { type: string }
-                    orgName: { type: string }
-                    state: { type: string }
-                    secretName: { type: string }
-                    secretARN: { type: string }
+                    orgID:
+                      type: string
+                    orgName:
+                      type: string
+                    state:
+                      type: string
+                    secretName:
+                      type: string
+                    secretARN:
+                      type: string
                     apiKeyRoles:
                       type: array
-                      items: { type: string }
-                    ipAccessEntryCount: { type: integer }
-                    ipAccessError: { type: string }
+                      items:
+                        type: string
+                    ipAccessEntryCount:
+                      type: integer
+                    ipAccessError:
+                      type: string
+                    enforcementError:
+                      type: string
+                    apiAccessListRequired:
+                      type: boolean
+                    lastEnforcementToggleTime:
+                      type: string
+                      format: date-time
+                    lastIPAccessUpdate:
+                      type: string
+                      format: date-time
                 conditions:
                   type: array
                   items:
                     type: object
+                    required:
+                      - lastTransitionTime
+                      - reason
+                      - status
+                      - type
                     properties:
-                      lastTransitionTime: { type: string, format: date-time }
-                      message: { type: string }
-                      reason: { type: string }
-                      status: { type: string }
-                      type: { type: string }
-                    required: [lastTransitionTime, reason, status, type]
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+                      reason:
+                        type: string
+                      status:
+                        type: string
+                      type:
+                        type: string
+
 
 ---
 apiVersion: apiextensions.crossplane.io/v1
@@ -134,12 +157,10 @@ spec:
           providerConfigRef:
             name: default
           deletionPolicy: Delete
-          # Managed resource publishes its secret to crossplane-system
           writeConnectionSecretToRef:
-            name: ""                  # patched below
             namespace: crossplane-system
       patches:
-        # 1) Name the managed resource from XR name, then override with Claim name if present
+        # Name patching
         - fromFieldPath: "metadata.name"
           toFieldPath: "metadata.name"
         - fromFieldPath: "metadata.labels[crossplane.io/claim-name]"
@@ -147,42 +168,43 @@ spec:
           policy:
             fromFieldPath: Optional
 
-        # 2) Default the AWS Secrets Manager secretName to Claim/XR name
-        #    (this runs BEFORE the explicit parameter patch so the parameter can overwrite it)
+        # AWS Secrets Config
         - fromFieldPath: "metadata.name"
           toFieldPath: "spec.forProvider.awsSecretsConfig.secretName"
+        - fromFieldPath: "spec.parameters.awsSecretsConfig.region"
+          toFieldPath: "spec.forProvider.awsSecretsConfig.region"
+        - fromFieldPath: "spec.parameters.awsSecretsConfig.secretName"
+          toFieldPath: "spec.forProvider.awsSecretsConfig.secretName"
+          policy:
+            fromFieldPath: Optional
+        - fromFieldPath: "spec.parameters.awsSecretsConfig.kmsKeyId"
+          toFieldPath: "spec.forProvider.awsSecretsConfig.kmsKeyId"
+          policy:
+            fromFieldPath: Optional
 
-        # 3) XR params -> managed spec.forProvider
+        # Organization Config
         - fromFieldPath: "spec.parameters.ownerID"
           toFieldPath: "spec.forProvider.ownerID"
         - fromFieldPath: "spec.parameters.apiKey.description"
           toFieldPath: "spec.forProvider.apiKey.description"
         - fromFieldPath: "spec.parameters.apiKey.roles"
           toFieldPath: "spec.forProvider.apiKey.roles"
-        - fromFieldPath: "spec.parameters.awsSecretsConfig.region"
-          toFieldPath: "spec.forProvider.awsSecretsConfig.region"
-        # Explicit parameter wins and will overwrite the default set above if provided
-        - fromFieldPath: "spec.parameters.awsSecretsConfig.secretName"
-          toFieldPath: "spec.forProvider.awsSecretsConfig.secretName"
-          policy: { fromFieldPath: Optional }
-        - fromFieldPath: "spec.parameters.awsSecretsConfig.kmsKeyId"
-          toFieldPath: "spec.forProvider.awsSecretsConfig.kmsKeyId"
-          policy: { fromFieldPath: Optional }
+
+        # Network Access Config
         - fromFieldPath: "spec.parameters.networkAccessConfig.enabled"
           toFieldPath: "spec.forProvider.networkAccessConfig.enabled"
-          policy: { fromFieldPath: Optional }
         - fromFieldPath: "spec.parameters.networkAccessConfig.autoCleanup"
           toFieldPath: "spec.forProvider.networkAccessConfig.autoCleanup"
-          policy: { fromFieldPath: Optional }
+        - fromFieldPath: "spec.parameters.networkAccessConfig.apiAccessListRequired"
+          toFieldPath: "spec.forProvider.networkAccessConfig.apiAccessListRequired"
         - fromFieldPath: "spec.parameters.networkAccessConfig.ips"
           toFieldPath: "spec.forProvider.networkAccessConfig.ips"
-          policy: { fromFieldPath: Optional }
 
-        # 4) ProviderConfigRef from XR param
+        # Provider Config
         - fromFieldPath: "spec.parameters.providerConfigRefName"
           toFieldPath: "spec.providerConfigRef.name"
 
-        # 5) Ensure the managed connection secret name equals Claim/XR name
+        # Connection Secret
         - fromFieldPath: "metadata.name"
           toFieldPath: "spec.writeConnectionSecretToRef.name"
         - fromFieldPath: "metadata.labels[crossplane.io/claim-name]"
@@ -190,7 +212,7 @@ spec:
           policy:
             fromFieldPath: Optional
 
-        # 6) Patch selected status fields back to XR
+        # Status Patches
         - type: ToCompositeFieldPath
           fromFieldPath: "status.atProvider.orgID"
           toFieldPath: "status.atProvider.orgID"
@@ -212,6 +234,21 @@ spec:
         - type: ToCompositeFieldPath
           fromFieldPath: "status.atProvider.ipAccessEntryCount"
           toFieldPath: "status.atProvider.ipAccessEntryCount"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.ipAccessError"
+          toFieldPath: "status.atProvider.ipAccessError"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.enforcementError"
+          toFieldPath: "status.atProvider.enforcementError"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.apiAccessListRequired"
+          toFieldPath: "status.atProvider.apiAccessListRequired"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.lastEnforcementToggleTime"
+          toFieldPath: "status.atProvider.lastEnforcementToggleTime"
+        - type: ToCompositeFieldPath
+          fromFieldPath: "status.atProvider.lastIPAccessUpdate"
+          toFieldPath: "status.atProvider.lastIPAccessUpdate"
 
       connectionDetails:
         - fromConnectionSecretKey: publicKey

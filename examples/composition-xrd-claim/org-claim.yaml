@@ -22,14 +22,16 @@ spec:
     networkAccessConfig:
       enabled: true
       autoCleanup: true
+      apiAccessListRequired: true
+
       ips:
-        - ip: "167.103.20.109"
-        - ip: "106.215.176.139"
-        - ip: "167.103.25.0"
+        - ip: "63.180.117.9"
+        - ip: "63.180.82.187"
+        - ip: "167.103.20.121"
     providerConfigRefName: atlas-provider-aws-only
 
-  # Explicitly set the XR/Claim connection secret name and namespace
-  # so it is constant (equals the org/claim name) and avoids any suffixes.
-  writeConnectionSecretToRef:
-    name: swap-v7
-    namespace: crossplane-system
+  # # Explicitly set the XR/Claim connection secret name and namespace
+  # # so it is constant (equals the org/claim name) and avoids any suffixes.
+  # writeConnectionSecretToRef:
+  #   name: swap-v7
+  #   namespace: crossplane-system

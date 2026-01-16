@@ -28,7 +28,7 @@ PLATFORMS ?= linux/amd64,linux/arm64
 BUILDX_BUILDER_NAME ?= crossplane-builder
 
 # Tools
-CONTROLLER_GEN_VERSION := v0.19.0
+CONTROLLER_GEN_VERSION := v0.20.0
 CROSSPLANE_TOOLS_VERSION := v0.22.0
 
 # Paths

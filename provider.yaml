@@ -3,6 +3,6 @@ kind: Provider
 metadata:
   name: swap-provider-mongodb
 spec:
-  package: docker.io/svchaudharialliazn/swapnil-provider-mongodb:v0.1.9
+  package: docker.io/svchaudharialliazn/swapnil-provider-mongodb:v0.1.10
   runtimeConfigRef:
     name: swap-provider-runtime

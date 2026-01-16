@@ -1,6 +1,4 @@
 // apis/organization/v1alpha1/organization_types.go
-// UPDATED: CIDRBlock optional; added APIAccessListRequired and LastEnforcementToggleTime.
-// Run controller-gen after updating to regenerate the CRD.
 package v1alpha1
 
 import (
@@ -15,6 +13,8 @@ import (
 // ===============================================================
 // AWS Secrets Manager Configuration
 // ===============================================================
+
+// AWSSecretsManagerReference defines the AWS Secrets Manager configuration
 type AWSSecretsManagerReference struct {
 	// Region where the MongoDB API key secret will be stored.
 	Region string `json:"region"`
@@ -27,7 +27,11 @@ type AWSSecretsManagerReference struct {
 	KMSKeyID *string `json:"kmsKeyId,omitempty"`
 }
 
-// ========== IP ACCESS TYPES ==========
+// ===============================================================
+// IP Access Types
+// ===============================================================
+
+// IPAccessEntry represents a single IP address in the access list
 type IPAccessEntry struct {
 	// IP is a single IPv4 address (e.g., "203.0.113.45")
 	IP string `json:"ip"`
@@ -64,63 +68,150 @@ type NetworkAccessConfig struct {
 // ===============================================================
 // Organization Parameters
 // ===============================================================
+
+// OrganizationParameters defines the desired state of the Organization
 type OrganizationParameters struct {
-	APIKey           OrganizationAPIKey         `json:"apiKey"`
-	OwnerID          string                     `json:"ownerID"`
+	// APIKey configuration for the organization
+	APIKey OrganizationAPIKey `json:"apiKey"`
+
+	// OwnerID is the MongoDB Atlas user ID who will own the organization
+	OwnerID string `json:"ownerID"`
+
+	// AWSSecretsConfig defines where to store the API key in AWS Secrets Manager
 	AWSSecretsConfig AWSSecretsManagerReference `json:"awsSecretsConfig"`
-	// IP Access configuration
+
+	// NetworkAccessConfig defines IP access provisioning
 	NetworkAccessConfig NetworkAccessConfig `json:"networkAccessConfig,omitempty"`
 }
 
+// OrganizationAPIKey defines the API key configuration
 type OrganizationAPIKey struct {
-	Description string   `json:"description"`
-	Roles       []string `json:"roles"`
+	// Description for the API key
+	Description string `json:"description"`
+
+	// Roles assigned to the API key
+	Roles []string `json:"roles"`
 }
 
 // ===============================================================
 // Organization Observation (Status Fields)
 // ===============================================================
+
+// OrganizationObservation contains the observed state of the Organization
 type OrganizationObservation struct {
-	OrgID      string       `json:"orgID,omitempty"`
-	OrgName    string       `json:"orgName,omitempty"`
-	SecretName string       `json:"secretName,omitempty"`
-	SecretARN  string       `json:"secretARN,omitempty"`
-	KMSKeyID   string       `json:"kmsKeyId,omitempty"`
-	CreatedAt  *metav1.Time `json:"createdAt,omitempty"`
+	// OrgID is the MongoDB Atlas organization ID
+	OrgID string `json:"orgID,omitempty"`
 
-	// API key audit fields
-	CreatedWithCredentialSource string   `json:"createdWithCredentialSource,omitempty"`
-	CreatedWithAPIKeyID         string   `json:"createdWithAPIKeyID,omitempty"`
-	APIKeyRoles                 []string `json:"apiKeyRoles,omitempty"`
+	// OrgName is the name of the organization
+	OrgName string `json:"orgName,omitempty"`
 
-	// Deletion tracking
-	LastDeletionAttemptTime  *metav1.Time `json:"lastDeletionAttemptTime,omitempty"`
-	DeletionAttemptCount     int          `json:"deletionAttemptCount,omitempty"`
-	LastDeletionAttemptError string       `json:"lastDeletionAttemptError,omitempty"`
+	// SecretName is the name of the AWS secret
+	SecretName string `json:"secretName,omitempty"`
 
-	State     *string      `json:"state,omitempty"`     // PENDING | ACTIVE | DELETING | DELETED
-	DeletedAt *metav1.Time `json:"deletedAt,omitempty"` // Deletion timestamp
+	// SecretARN is the ARN of the AWS secret
+	SecretARN string `json:"secretARN,omitempty"`
 
-	// Org-level enforcement status
-	APIAccessListRequired     *bool        `json:"apiAccessListRequired,omitempty"`
+	// KMSKeyID is the KMS key used to encrypt the secret
+	KMSKeyID string `json:"kmsKeyId,omitempty"`
+
+	// CreatedAt is when the organization was created
+	CreatedAt *metav1.Time `json:"createdAt,omitempty"`
+
+	// ===============================================================
+	// API Key Audit Fields
+	// ===============================================================
+
+	// CreatedWithCredentialSource indicates the credential source used
+	CreatedWithCredentialSource string `json:"createdWithCredentialSource,omitempty"`
+
+	// CreatedWithAPIKeyID is the masked API key ID used for creation
+	CreatedWithAPIKeyID string `json:"createdWithAPIKeyID,omitempty"`
+
+	// APIKeyRoles are the roles assigned to the API key
+	APIKeyRoles []string `json:"apiKeyRoles,omitempty"`
+
+	// ===============================================================
+	// Deletion Tracking
+	// ===============================================================
+
+	// LastDeletionAttemptTime is the timestamp of the last deletion attempt
+	LastDeletionAttemptTime *metav1.Time `json:"lastDeletionAttemptTime,omitempty"`
+
+	// DeletionAttemptCount tracks how many times deletion has been attempted
+	DeletionAttemptCount int `json:"deletionAttemptCount,omitempty"`
+
+	// LastDeletionAttemptError contains the error message from the last deletion attempt
+	LastDeletionAttemptError string `json:"lastDeletionAttemptError,omitempty"`
+
+	// DeletionPhase tracks the current phase of the deletion state machine
+	DeletionPhase string `json:"deletionPhase,omitempty"`
+
+	// EnforcementDisabledAt is when apiAccessListRequired was disabled during deletion
+	EnforcementDisabledAt *metav1.Time `json:"enforcementDisabledAt,omitempty"`
+
+	// IPsCleanedUp indicates whether IPs have been cleaned up during deletion
+	IPsCleanedUp bool `json:"ipsCleanedUp,omitempty"`
+
+	// DependenciesChecked indicates whether dependencies have been checked
+	DependenciesChecked bool `json:"dependenciesChecked,omitempty"`
+
+	// LastRateLimitHitTime is when the last rate limit (429) was encountered
+	LastRateLimitHitTime *metav1.Time `json:"lastRateLimitHitTime,omitempty"`
+
+	// ForceDeleteAfterFailures indicates deletion failed and force delete is available
+	ForceDeleteAfterFailures bool `json:"forceDeleteAfterFailures,omitempty"`
+
+	// ===============================================================
+	// State Tracking
+	// ===============================================================
+
+	// State represents the current state (PENDING, ACTIVE, DELETING, DELETED)
+	State *string `json:"state,omitempty"`
+
+	// DeletedAt is the timestamp when the organization was deleted
+	DeletedAt *metav1.Time `json:"deletedAt,omitempty"`
+
+	// ===============================================================
+	// Org-level Enforcement Status
+	// ===============================================================
+
+	// APIAccessListRequired indicates whether IP access list is required
+	APIAccessListRequired *bool `json:"apiAccessListRequired,omitempty"`
+
+	// LastEnforcementToggleTime is when apiAccessListRequired was last changed
 	LastEnforcementToggleTime *metav1.Time `json:"lastEnforcementToggleTime,omitempty"`
-	EnforcementError          string       `json:"enforcementError,omitempty"`
 
-	// IP access status
-	ProvisionedIPs     []IPAccessEntry `json:"provisionedIPs,omitempty"`
-	IPAccessEntryCount int             `json:"ipAccessEntryCount,omitempty"`
-	LastIPAccessUpdate *metav1.Time    `json:"lastIPAccessUpdate,omitempty"`
-	IPAccessError      string          `json:"ipAccessError,omitempty"`
+	// EnforcementError contains any error from enforcement operations
+	EnforcementError string `json:"enforcementError,omitempty"`
+
+	// ===============================================================
+	// IP Access Status
+	// ===============================================================
+
+	// ProvisionedIPs is the list of IPs provisioned to the access list
+	ProvisionedIPs []IPAccessEntry `json:"provisionedIPs,omitempty"`
+
+	// IPAccessEntryCount is the number of IPs in the access list
+	IPAccessEntryCount int `json:"ipAccessEntryCount,omitempty"`
+
+	// LastIPAccessUpdate is the timestamp of the last IP access list update
+	LastIPAccessUpdate *metav1.Time `json:"lastIPAccessUpdate,omitempty"`
+
+	// IPAccessError contains any error from IP access list operations
+	IPAccessError string `json:"ipAccessError,omitempty"`
 }
 
 // ===============================================================
 // Spec & Status
 // ===============================================================
+
+// OrganizationSpec defines the desired state of Organization
 type OrganizationSpec struct {
 	xpv1.ResourceSpec `json:",inline"`
 	ForProvider       OrganizationParameters `json:"forProvider"`
 }
 
+// OrganizationStatus defines the observed state of Organization
 type OrganizationStatus struct {
 	xpv1.ResourceStatus `json:",inline"`
 	AtProvider          OrganizationObservation `json:"atProvider,omitempty"`
@@ -134,12 +225,14 @@ type OrganizationStatus struct {
 // +kubebuilder:printcolumn:name="READY",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="SYNCED",type="string",JSONPath=".status.conditions[?(@.type=='Synced')].status"
 // +kubebuilder:printcolumn:name="ORG-ID",type="string",JSONPath=".status.atProvider.orgID"
-// +kubebuilder:printcolumn:name="SECRET-NAME",type="string",JSONPath=".status.atProvider.secretName"
-// +kubebuilder:printcolumn:name="SECRET-ARN",type="string",JSONPath=".status.atProvider.secretARN"
 // +kubebuilder:printcolumn:name="STATE",type="string",JSONPath=".status.atProvider.state"
+// +kubebuilder:printcolumn:name="DEL-PHASE",type="string",JSONPath=".status.atProvider.deletionPhase",priority=1
+// +kubebuilder:printcolumn:name="DEL-ATTEMPTS",type="integer",JSONPath=".status.atProvider.deletionAttemptCount",priority=1
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,categories={crossplane,managed,mongodb}
+
+// Organization is the Schema for the organizations API
 type Organization struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -149,6 +242,8 @@ type Organization struct {
 }
 
 // +kubebuilder:object:root=true
+
+// OrganizationList contains a list of Organization
 type OrganizationList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
@@ -158,6 +253,7 @@ type OrganizationList struct {
 // ===============================================================
 // Type Metadata
 // ===============================================================
+
 var (
 	OrganizationKind             = reflect.TypeOf(Organization{}).Name()
 	OrganizationGroupKind        = schema.GroupKind{Group: Group, Kind: OrganizationKind}.String()
@@ -166,16 +262,80 @@ var (
 )
 
 // ===============================================================
-// Deletion Constants
+// Organization State Constants
 // ===============================================================
-const (
-	FinalizerOrganizationCleanup = "organization.platform.allianz.io/cleanup"
 
-	OrganizationStatePending  = "PENDING"
-	OrganizationStateActive   = "ACTIVE"
+const (
+	// OrganizationStatePending indicates the organization is being created
+	OrganizationStatePending = "PENDING"
+
+	// OrganizationStateActive indicates the organization is active
+	OrganizationStateActive = "ACTIVE"
+
+	// OrganizationStateDeleting indicates the organization is being deleted
 	OrganizationStateDeleting = "DELETING"
-	OrganizationStateDeleted  = "DELETED"
+
+	// OrganizationStateDeleted indicates the organization has been deleted
+	OrganizationStateDeleted = "DELETED"
 )
+
+// // ===============================================================
+// // Deletion Phase Constants
+// // ===============================================================
+
+// const (
+// 	// DeletionPhaseInit is the initial state (empty string)
+// 	DeletionPhaseInit = ""
+
+// 	// DeletionPhaseCheckDependencies checks for projects/clusters before deletion
+// 	DeletionPhaseCheckDependencies = "CHECK_DEPENDENCIES"
+
+// 	// DeletionPhaseDisableEnforcement disables apiAccessListRequired before deletion
+// 	DeletionPhaseDisableEnforcement = "DISABLE_ENFORCEMENT"
+
+// 	// DeletionPhaseWaitForRateLimit waits for rate limit backoff to complete
+// 	DeletionPhaseWaitForRateLimit = "WAIT_RATE_LIMIT"
+
+// 	// DeletionPhaseCleanupIPs removes IPs from the access list
+// 	DeletionPhaseCleanupIPs = "CLEANUP_IPS"
+
+// 	// DeletionPhaseDeleteOrg attempts to delete the organization in Atlas
+// 	DeletionPhaseDeleteOrg = "DELETE_ORG"
+
+// 	// DeletionPhaseVerifyDeletion verifies the organization was deleted
+// 	DeletionPhaseVerifyDeletion = "VERIFY_DELETION"
+
+// 	// DeletionPhaseCleanupAWSSecret deletes the AWS secret
+// 	DeletionPhaseCleanupAWSSecret = "CLEANUP_AWS_SECRET"
+
+// 	// DeletionPhaseRemoveFinalizers removes finalizers to complete deletion
+// 	DeletionPhaseRemoveFinalizers = "REMOVE_FINALIZERS"
+
+// 	// DeletionPhaseFailed indicates deletion has failed after max retries
+// 	DeletionPhaseFailed = "FAILED"
+
+// 	// DeletionPhaseComplete indicates deletion is complete
+// 	DeletionPhaseComplete = "COMPLETE"
+// )
+
+// ===============================================================
+// Finalizer Constants
+// ===============================================================
+
+const (
+	// FinalizerOrganizationCleanup is the finalizer for organization cleanup
+	FinalizerOrganizationCleanup = "organization.platform.allianz.io/cleanup"
+)
+
+// ===============================================================
+// Annotation Constants
+// ===============================================================
+
+// const (
+// 	// AnnotationForceDelete allows force deletion of the Kubernetes resource
+// 	// even if the Atlas organization couldn't be deleted
+// 	AnnotationForceDelete = "organization.mongodb.swapnil.io/force-delete"
+// )
 
 func init() {
 	SchemeBuilder.Register(&Organization{}, &OrganizationList{})
