@@ -31,14 +31,12 @@ spec:
     - jsonPath: .status.atProvider.state
       name: STATE
       type: string
-    - jsonPath: .status.atProvider.deletionPhase
-      name: DEL-PHASE
-      priority: 1
+    - jsonPath: .status.atProvider.secretName
+      name: SECRET-NAME
       type: string
-    - jsonPath: .status.atProvider.deletionAttemptCount
-      name: DEL-ATTEMPTS
-      priority: 1
-      type: integer
+    - jsonPath: .status.atProvider.secretARN
+      name: SECRET-ARN
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date
@@ -408,7 +406,7 @@ spec:
                     type: string
                   createdWithCredentialSource:
                     description: CreatedWithCredentialSource indicates the credential
-                      source used
+                      source used (e.g., "AWS")
                     type: string
                   deletedAt:
                     description: DeletedAt is the timestamp when the organization
@@ -454,6 +452,7 @@ spec:
                     type: boolean
                   kmsKeyId:
                     description: KMSKeyID is the KMS key used to encrypt the secret
+                      (optional informational field)
                     type: string
                   lastDeletionAttemptError:
                     description: LastDeletionAttemptError contains the error message
@@ -486,8 +485,11 @@ spec:
                     description: OrgName is the name of the organization
                     type: string
                   provisionedIPs:
-                    description: ProvisionedIPs is the list of IPs provisioned to
-                      the access list
+                    description: |-
+                      ===============================================================
+                      IP Access Status
+                      ===============================================================
+                      ProvisionedIPs is the list of IPs provisioned to the access list
                     items:
                       description: IPAccessEntry represents a single IP address in
                         the access list

@@ -330,8 +330,9 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 			}
 		}
 
+		// After restoring external-name, trigger Update to reconcile desired settings.
 		cr.SetConditions(xpv1.Available())
-		return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
+		return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: false}, nil
 	}
 
 	// No external name: try to adopt by name.
@@ -384,7 +385,8 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 				return managed.ExternalObservation{}, errors.Wrap(err, "updating status after adopting existing org")
 			}
 
-			return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
+			// After adoption, trigger Update to reconcile desired IPs/enforcement.
+			return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: false}, nil
 		}
 
 		// Not found: proceed to create.
@@ -406,10 +408,48 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		cr.Status.AtProvider.SecretName = secretName
 	}
 
+	// Decide if resource is up to date with desired spec.
+	upToDate := true
+
+	// Compare desired vs current secret name to trigger Update for migration.
+	if cr.Status.AtProvider.SecretName != "" && cr.Status.AtProvider.SecretName != secretName {
+		upToDate = false
+	}
+
+	// Compare enforcement flag
+	desiredEnforcement := cr.Spec.ForProvider.NetworkAccessConfig.APIAccessListRequired
+	currentEnforcement := cr.Status.AtProvider.APIAccessListRequired
+	if currentEnforcement == nil || *currentEnforcement != desiredEnforcement {
+		upToDate = false
+	}
+
+	// Compare desired IPs vs provisioned IPs (only if enabled)
+	if cr.Spec.ForProvider.NetworkAccessConfig.Enabled {
+		desiredIPs := make(map[string]struct{}, len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
+		for _, e := range cr.Spec.ForProvider.NetworkAccessConfig.IPs {
+			desiredIPs[e.IP] = struct{}{}
+		}
+		currentIPs := make(map[string]struct{}, len(cr.Status.AtProvider.ProvisionedIPs))
+		for _, e := range cr.Status.AtProvider.ProvisionedIPs {
+			currentIPs[e.IP] = struct{}{}
+		}
+		// If counts differ or any mismatched member, mark not up-to-date.
+		if len(desiredIPs) != len(currentIPs) {
+			upToDate = false
+		} else {
+			for ip := range desiredIPs {
+				if _, ok := currentIPs[ip]; !ok {
+					upToDate = false
+					break
+				}
+			}
+		}
+	}
+
 	cr.SetConditions(xpv1.Available())
 	return managed.ExternalObservation{
 		ResourceExists:   true,
-		ResourceUpToDate: true,
+		ResourceUpToDate: upToDate,
 	}, nil
 }
 
@@ -564,9 +604,7 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 	stateActive := v1alpha1.OrganizationStateActive
 	cr.Status.AtProvider.State = &stateActive
 
-	// ============================================================
-	// NEW: Provision IP access FIRST (before enabling enforcement)
-	// ============================================================
+	// Provision IP access FIRST (before enabling enforcement)
 	if cr.Spec.ForProvider.NetworkAccessConfig.Enabled && len(cr.Spec.ForProvider.NetworkAccessConfig.IPs) > 0 {
 		c.logger.Info("Provisioning IP access for new organization",
 			"orgID", org.ID, "ipCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
@@ -585,9 +623,7 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 		}
 	}
 
-	// ============================================================
-	// NEW: Enable apiAccessListRequired AFTER IPs are provisioned
-	// ============================================================
+	// Enable apiAccessListRequired AFTER IPs are provisioned
 	if cr.Spec.ForProvider.NetworkAccessConfig.APIAccessListRequired {
 		c.logger.Info("Enabling apiAccessListRequired for organization after IP provisioning",
 			"orgID", org.ID)
@@ -626,12 +662,33 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 		return managed.ExternalUpdate{}, nil
 	}
 
-	// Fetch org credentials from AWS SM (org-scoped API key)
-	secretName := finalSecretName(cr)
-	orgCreds, err := c.awsClient.GetSecret(ctx, secretName)
-	if err != nil {
-		c.logger.Info("Failed to fetch org credentials for update", "error", err)
-		return managed.ExternalUpdate{}, errors.Wrap(err, "failed to fetch org credentials for update")
+	now := metav1.Now()
+	statusChanged := false
+
+	// Determine desired and current secret names
+	desiredSecretName := finalSecretName(cr)
+	currentSecretName := cr.Status.AtProvider.SecretName
+	var secretNameUsed string
+
+	// Fetch org credentials from AWS SM (prefer current secret from status)
+	var orgCreds *awsclient.MongoDBAPICredentials
+	if currentSecretName != "" {
+		creds, err := c.awsClient.GetSecret(ctx, currentSecretName)
+		if err == nil {
+			orgCreds = creds
+			secretNameUsed = currentSecretName
+		} else {
+			c.logger.Info("Failed to read current secret; will try desired", "currentSecretName", currentSecretName, "error", err)
+		}
+	}
+	if orgCreds == nil {
+		creds, err := c.awsClient.GetSecret(ctx, desiredSecretName)
+		if err != nil {
+			c.logger.Info("Failed to read desired secret for update", "desiredSecretName", desiredSecretName, "error", err)
+			return managed.ExternalUpdate{}, errors.Wrap(err, "failed to fetch org credentials for update")
+		}
+		orgCreds = creds
+		secretNameUsed = desiredSecretName
 	}
 
 	orgService := c.newServiceFn(svc.Credentials{
@@ -639,19 +696,83 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 		PrivateKey: orgCreds.PrivateKey,
 	})
 
-	now := metav1.Now()
-	statusChanged := false
+	// Secret migration if spec name changed
+	if currentSecretName != "" && desiredSecretName != currentSecretName {
+		c.logger.Info("Migrating AWS secret to new name per spec change", "oldName", currentSecretName, "newName", desiredSecretName)
+		arn, err := c.awsClient.PutSecret(ctx, desiredSecretName, awsclient.MongoDBAPICredentials{
+			PublicKey:  orgCreds.PublicKey,
+			PrivateKey: orgCreds.PrivateKey,
+		}, orgID, cr.Spec.ForProvider.AWSSecretsConfig.KMSKeyID)
+		if err != nil {
+			c.logger.Info("Failed secret migration", "oldName", currentSecretName, "newName", desiredSecretName, "error", err)
+			return managed.ExternalUpdate{}, errors.Wrap(err, "failed to migrate AWS secret to new name")
+		}
+		// Update status with new secret details
+		cr.Status.AtProvider.SecretARN = arn
+		cr.Status.AtProvider.SecretName = desiredSecretName
+		statusChanged = true
 
-	// ============================================================
+		// Best-effort delete of old secret
+		if delErr := c.awsClient.DeleteSecret(ctx, currentSecretName, true); delErr != nil {
+			c.logger.Info("Failed to delete old AWS secret after migration (continuing)", "oldName", currentSecretName, "error", delErr)
+		}
+
+		secretNameUsed = desiredSecretName
+	}
+
+	// Update KMS Key ID on the existing secret if provided:
+	// Use PutSecret on the same name to update KMS association (no UpdateSecretKMSKey method).
+	if cr.Spec.ForProvider.AWSSecretsConfig.KMSKeyID != nil {
+		c.logger.Info("Ensuring AWS secret has desired KMS Key ID", "secretName", secretNameUsed, "kmsKeyID", *cr.Spec.ForProvider.AWSSecretsConfig.KMSKeyID)
+		arn, err := c.awsClient.PutSecret(ctx, secretNameUsed, awsclient.MongoDBAPICredentials{
+			PublicKey:  orgCreds.PublicKey,
+			PrivateKey: orgCreds.PrivateKey,
+		}, orgID, cr.Spec.ForProvider.AWSSecretsConfig.KMSKeyID)
+		if err != nil {
+			c.logger.Info("Failed to update secret KMS Key ID", "secretName", secretNameUsed, "error", err)
+			return managed.ExternalUpdate{}, errors.Wrap(err, "failed to update AWS secret KMS Key ID")
+		}
+		cr.Status.AtProvider.SecretARN = arn
+		statusChanged = true
+	}
+
+	// Update API key description (if provided)
+	apiKeyID, err := orgService.FindAPIKeyID(ctx, orgID, orgCreds.PublicKey, "")
+	if err != nil || apiKeyID == "" {
+		c.logger.Info("Could not resolve organization API key ID for API key updates; skipping", "orgID", orgID, "error", err)
+	} else {
+		desiredDesc := cr.Spec.ForProvider.APIKey.Description
+		if strings.TrimSpace(desiredDesc) != "" {
+			c.logger.Info("Updating org API key description", "orgID", orgID, "apiKeyID", apiKeyID)
+			if err := orgService.UpdateOrgAPIKeyDescription(ctx, orgID, apiKeyID, desiredDesc); err != nil {
+				c.logger.Info("Failed to update API key description", "orgID", orgID, "error", err)
+				cr.Status.AtProvider.EnforcementError = errors.Wrap(err, "update API key description").Error()
+				statusChanged = true
+			}
+		}
+
+		// Roles: reconcile differences
+		desiredRoles := cr.Spec.ForProvider.APIKey.Roles
+		if len(desiredRoles) > 0 && !equalStringSets(cr.Status.AtProvider.APIKeyRoles, desiredRoles) {
+			c.logger.Info("Updating org API key roles", "orgID", orgID, "apiKeyID", apiKeyID, "roles", desiredRoles)
+			if err := orgService.UpdateOrgAPIKeyRoles(ctx, orgID, apiKeyID, desiredRoles); err != nil {
+				c.logger.Info("Failed to update API key roles", "orgID", orgID, "error", err)
+				cr.Status.AtProvider.EnforcementError = errors.Wrap(err, "update API key roles").Error()
+				statusChanged = true
+			} else {
+				cr.Status.AtProvider.APIKeyRoles = desiredRoles
+				statusChanged = true
+			}
+		}
+	}
+
 	// Handle apiAccessListRequired enforcement updates
-	// ============================================================
 	desiredEnforcement := cr.Spec.ForProvider.NetworkAccessConfig.APIAccessListRequired
 	currentEnforcement := cr.Status.AtProvider.APIAccessListRequired
 
-	// Check if we need to update enforcement setting
 	needsEnforcementUpdate := false
 	if currentEnforcement == nil {
-		needsEnforcementUpdate = desiredEnforcement // Only update if desired is true
+		needsEnforcementUpdate = desiredEnforcement // only update if desired true
 	} else if *currentEnforcement != desiredEnforcement {
 		needsEnforcementUpdate = true
 	}
@@ -674,9 +795,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 		}
 	}
 
-	// ============================================================
 	// Handle IP access updates (only if enabled)
-	// ============================================================
 	if cr.Spec.ForProvider.NetworkAccessConfig.Enabled {
 		c.logger.Debug("Checking for IP access updates",
 			"orgID", orgID, "desiredIPCount", len(cr.Spec.ForProvider.NetworkAccessConfig.IPs))
@@ -977,4 +1096,28 @@ func (c *external) cleanupAWSSecretAfterDelete(
 
 	c.logger.Info("Organization fully deleted — finalizer(s) removed (if present)", "orgID", meta.GetExternalName(latest))
 	return nil
+}
+
+// helper to compare role slices as multi-sets (accounts for duplicates)
+func equalStringSets(a, b []string) bool {
+	if len(a) != len(b) {
+		// length differs -> sets differ (quick check)
+	}
+	am := make(map[string]int, len(a))
+	for _, s := range a {
+		am[s]++
+	}
+	bm := make(map[string]int, len(b))
+	for _, s := range b {
+		bm[s]++
+	}
+	if len(am) != len(bm) {
+		return false
+	}
+	for k, av := range am {
+		if bv, ok := bm[k]; !ok || bv != av {
+			return false
+		}
+	}
+	return true
 }

@@ -37,6 +37,10 @@ type Service interface {
 	AddIPsToAPIKeyAccessList(ctx context.Context, orgID, apiKeyID string, inputs []AddIPInput) error
 	RemoveIPFromAPIKeyAccessList(ctx context.Context, orgID, apiKeyID, ip string) error
 
+	// Org API key updates
+	UpdateOrgAPIKeyDescription(ctx context.Context, orgID, apiKeyID, description string) error
+	UpdateOrgAPIKeyRoles(ctx context.Context, orgID, apiKeyID string, roles []string) error
+
 	// Org-level Admin API IP enforcement (v2 endpoint)
 	SetOrgAdminAPIIPEnforcement(ctx context.Context, orgID string, required bool) error
 	GetOrgAdminAPIIPEnforcement(ctx context.Context, orgID string) (bool, error)
@@ -503,4 +507,24 @@ func (c *client) RemoveIPFromAPIKeyAccessList(ctx context.Context, orgID, apiKey
 	endpoint := fmt.Sprintf("/orgs/%s/apiKeys/%s/accessList/%s",
 		url.PathEscape(orgID), url.PathEscape(apiKeyID), url.PathEscape(ip))
 	return c.makeRequest(ctx, http.MethodDelete, endpoint, nil, nil)
+}
+
+// UpdateOrgAPIKeyDescription updates the description (desc) of an org API key.
+func (c *client) UpdateOrgAPIKeyDescription(ctx context.Context, orgID, apiKeyID, description string) error {
+	if orgID == "" || apiKeyID == "" {
+		return fmt.Errorf("orgID and apiKeyID cannot be empty")
+	}
+	endpoint := fmt.Sprintf("/orgs/%s/apiKeys/%s", url.PathEscape(orgID), url.PathEscape(apiKeyID))
+	payload := map[string]any{"desc": description}
+	return c.makeRequest(ctx, http.MethodPatch, endpoint, payload, nil)
+}
+
+// UpdateOrgAPIKeyRoles updates the roles assigned to an org API key.
+func (c *client) UpdateOrgAPIKeyRoles(ctx context.Context, orgID, apiKeyID string, roles []string) error {
+	if orgID == "" || apiKeyID == "" {
+		return fmt.Errorf("orgID and apiKeyID cannot be empty")
+	}
+	endpoint := fmt.Sprintf("/orgs/%s/apiKeys/%s", url.PathEscape(orgID), url.PathEscape(apiKeyID))
+	payload := map[string]any{"roles": roles}
+	return c.makeRequest(ctx, http.MethodPatch, endpoint, payload, nil)
 }

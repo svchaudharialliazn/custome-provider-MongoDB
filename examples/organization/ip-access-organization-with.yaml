@@ -1,9 +1,9 @@
 apiVersion: organization.mongodb.swapnil.io/v1alpha1
 kind: Organization
 metadata:
-  name: swap-v12
-  annotations:
-    crossplane.io/external-name: ""
+  name: swap-v13
+  # annotations:
+  #   crossplane.io/external-name: ""
 spec:
   forProvider:
     ownerID: "68933765952cea244d470efb"
@@ -13,7 +13,7 @@ spec:
         - "ORG_OWNER"
     awsSecretsConfig:
       region: "eu-central-1"
-      secretName: "swap-v12"
+      secretName: "swap-v13"
       kmsKeyId: "arn:aws:kms:eu-central-1:198927051560:key/50aed21c-4e38-4e62-9907-f35911304563"
     networkAccessConfig:
       enabled: true
@@ -22,7 +22,8 @@ spec:
       ips:
         - ip: "63.180.117.9"
         - ip: "63.180.82.187"
-        - ip: "167.103.20.121"
+        - ip: "167.103.64.89"
+        - ip: "167.103.64.87"
   providerConfigRef:
     name: atlas-provider-aws-only
   deletionPolicy: Delete

@@ -22,7 +22,7 @@ spec:
                 secretName: corp-ca
           containers:
             - name: package-runtime
-              image: docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.10
+              image: docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.12
               imagePullPolicy: IfNotPresent
               env:
                 - name: AWS_DEFAULT_REGION
