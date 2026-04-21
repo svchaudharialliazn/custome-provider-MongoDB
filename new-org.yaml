@@ -1,0 +1,38 @@
+apiVersion: organization.mongodb.swapnil.io/v1alpha1
+kind: Organization
+metadata:
+  name: test-org-1
+spec:
+  providerConfigRef:
+    name: default
+  forProvider:
+    ownerID: "68933765952cea244d470efb"  # Replace with your MongoDB Atlas user ID
+    
+    apiKey:
+      description: "Test Organization API Key"
+      roles:
+        - ORG_OWNER
+    
+    # NEW: secretStorageConfig - Store API keys in Kubernetes
+    secretStorageConfig:
+      type: Kubernetes
+      kubernetes:
+        namespace: crossplane-system
+        # Optional: name defaults to {org-name}-mongodb-credentials
+        # name: custom-secret-name
+    
+    networkAccessConfig:
+      enabled: true
+      autoCleanup: true
+      apiAccessListRequired: true
+      ips:
+        - ip: "165.225.120.93"
+        - ip: "203.0.113.10"
+        - ip: "167.103.118.83"
+        - ip: "167.103.118.82"
+        - ip: "136.226.254.107"
+  
+  deletionPolicy: Delete
+  managementPolicies: ["*"]
+
+

@@ -20,10 +20,8 @@ spec:
       autoCleanup: true
       apiAccessListRequired: true
       ips:
-        - ip: "63.180.117.9"
-        - ip: "63.180.82.187"
-        - ip: "167.103.64.89"
-        - ip: "167.103.64.87"
+        - ip: "165.225.120.93"
+
   providerConfigRef:
     name: atlas-provider-aws-only
   deletionPolicy: Delete

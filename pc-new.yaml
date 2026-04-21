@@ -1,12 +1,12 @@
----
 apiVersion: mongodb.swapnil.io/v1alpha1
 kind: ProviderConfig
 metadata:
-  name: sample-config
+  name: default
 spec:
   credentials:
     source: Secret
     secretRef:
-      name: mongodb-root-credentials
       namespace: crossplane-system
+      name: mongodb-root-credentials
       key: credentials
+

@@ -2,29 +2,74 @@
 package v1alpha1
 
 import (
-	"reflect"
+    "reflect"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "k8s.io/apimachinery/pkg/runtime/schema"
 
-	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+    xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 )
 
 // ===============================================================
-// AWS Secrets Manager Configuration
+// Secret Storage Configuration (Dual Storage Support)
+// ===============================================================
+
+// SecretStorageType defines where organization API keys are stored
+// +kubebuilder:validation:Enum=AWS;Kubernetes
+type SecretStorageType string
+
+const (
+    // SecretStorageTypeAWS stores secrets in AWS Secrets Manager
+    SecretStorageTypeAWS SecretStorageType = "AWS"
+
+    // SecretStorageTypeKubernetes stores secrets in Kubernetes Secrets
+    SecretStorageTypeKubernetes SecretStorageType = "Kubernetes"
+)
+
+// KubernetesSecretReference defines Kubernetes Secret storage configuration
+type KubernetesSecretReference struct {
+    // Name of the Kubernetes Secret (optional, defaults to {org-name}-mongodb-credentials)
+    // +optional
+    Name *string `json:"name,omitempty"`
+
+    // Namespace where the secret will be created (optional, defaults to crossplane-system)
+    // +optional
+    Namespace *string `json:"namespace,omitempty"`
+}
+
+// SecretStorageConfig defines where organization API keys should be stored
+type SecretStorageConfig struct {
+    // Type specifies the storage backend (AWS or Kubernetes)
+    // +kubebuilder:validation:Required
+    Type SecretStorageType `json:"type"`
+
+    // AWS configuration (used when Type is "AWS")
+    // +optional
+    AWS *AWSSecretsManagerReference `json:"aws,omitempty"`
+
+    // Kubernetes configuration (used when Type is "Kubernetes")
+    // +optional
+    Kubernetes *KubernetesSecretReference `json:"kubernetes,omitempty"`
+}
+
+// ===============================================================
+// AWS Secrets Manager Configuration (Kept for Compatibility)
 // ===============================================================
 
 // AWSSecretsManagerReference defines the AWS Secrets Manager configuration
 type AWSSecretsManagerReference struct {
-	// Region where the MongoDB API key secret will be stored.
-	Region string `json:"region"`
+    // Region where the MongoDB API key secret will be stored.
+    // +kubebuilder:validation:Required
+    Region string `json:"region"`
 
-	// SecretName is appended to "product/mongodb/".
-	// If omitted, defaults to metadata.name.
-	SecretName *string `json:"secretName,omitempty"`
+    // SecretName is appended to "product/mongodb/".
+    // If omitted, defaults to metadata.name.
+    // +optional
+    SecretName *string `json:"secretName,omitempty"`
 
-	// Optional custom AWS KMS key.
-	KMSKeyID *string `json:"kmsKeyId,omitempty"`
+    // Optional custom AWS KMS key.
+    // +optional
+    KMSKeyID *string `json:"kmsKeyId,omitempty"`
 }
 
 // ===============================================================
@@ -33,36 +78,45 @@ type AWSSecretsManagerReference struct {
 
 // IPAccessEntry represents a single IP address in the access list
 type IPAccessEntry struct {
-	// IP is a single IPv4 address (e.g., "203.0.113.45")
-	IP string `json:"ip"`
+    // IP is a single IPv4 address (e.g., "203.0.113.45")
+    // +kubebuilder:validation:Required
+    // +kubebuilder:validation:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}$`
+    IP string `json:"ip"`
 
-	// Comment is an optional description of the IP access
-	Comment *string `json:"comment,omitempty"`
+    // Comment is an optional description of the IP access
+    // +optional
+    Comment *string `json:"comment,omitempty"`
 
-	// CIDRBlock is the CIDR notation of the IP (always {IP}/32 for single IPs)
-	// Optional: controller will populate in status.
-	CIDRBlock string `json:"cidrBlock,omitempty"`
+    // CIDRBlock is the CIDR notation of the IP (always {IP}/32 for single IPs)
+    // Optional: controller will populate in status.
+    // +optional
+    CIDRBlock string `json:"cidrBlock,omitempty"`
 
-	// CreatedAt tracks when this IP was provisioned
-	CreatedAt *metav1.Time `json:"createdAt,omitempty"`
+    // CreatedAt tracks when this IP was provisioned
+    // +optional
+    CreatedAt *metav1.Time `json:"createdAt,omitempty"`
 }
 
 // NetworkAccessConfig defines IP access provisioning for the organization
 type NetworkAccessConfig struct {
-	// Enabled controls whether IP access provisioning is active
-	Enabled bool `json:"enabled"`
+    // Enabled controls whether IP access provisioning is active
+    // +optional
+    Enabled bool `json:"enabled"`
 
-	// IPs is the list of individual IP addresses to whitelist
-	IPs []IPAccessEntry `json:"ips,omitempty"`
+    // IPs is the list of individual IP addresses to whitelist
+    // +optional
+    IPs []IPAccessEntry `json:"ips,omitempty"`
 
-	// AutoCleanup determines if IPs should be removed when org is deleted
-	AutoCleanup bool `json:"autoCleanup"`
+    // AutoCleanup determines if IPs should be removed when org is deleted
+    // +optional
+    AutoCleanup bool `json:"autoCleanup"`
 
-	// APIAccessListRequired enables Atlas organization-level enforcement:
-	// "Require IP Access List for the Atlas Administration API".
-	// When true, the controller will call PATCH /orgs/{orgId}/settings
-	// to set apiAccessListRequired: true after org creation.
-	APIAccessListRequired bool `json:"apiAccessListRequired,omitempty"`
+    // APIAccessListRequired enables Atlas organization-level enforcement:
+    // "Require IP Access List for the Atlas Administration API".
+    // When true, the controller will call PATCH /orgs/{orgId}/settings
+    // to set apiAccessListRequired: true after org creation.
+    // +optional
+    APIAccessListRequired bool `json:"apiAccessListRequired,omitempty"`
 }
 
 // ===============================================================
@@ -71,26 +125,39 @@ type NetworkAccessConfig struct {
 
 // OrganizationAPIKey defines the API key configuration
 type OrganizationAPIKey struct {
-	// Description for the API key
-	Description string `json:"description"`
+    // Description for the API key
+    // +kubebuilder:validation:Required
+    Description string `json:"description"`
 
-	// Roles assigned to the API key
-	Roles []string `json:"roles"`
+    // Roles assigned to the API key
+    // +kubebuilder:validation:Required
+    // +kubebuilder:validation:MinItems=1
+    Roles []string `json:"roles"`
 }
 
 // OrganizationParameters defines the desired state of the Organization
 type OrganizationParameters struct {
-	// APIKey configuration for the organization
-	APIKey OrganizationAPIKey `json:"apiKey"`
+    // APIKey configuration for the organization
+    // +kubebuilder:validation:Required
+    APIKey OrganizationAPIKey `json:"apiKey"`
 
-	// OwnerID is the MongoDB Atlas user ID who will own the organization
-	OwnerID string `json:"ownerID"`
+    // OwnerID is the MongoDB Atlas user ID who will own the organization
+    // +kubebuilder:validation:Required
+    OwnerID string `json:"ownerID"`
 
-	// AWSSecretsConfig defines where to store the API key in AWS Secrets Manager
-	AWSSecretsConfig AWSSecretsManagerReference `json:"awsSecretsConfig"`
+    // SecretStorageConfig defines where to store the API key (preferred)
+    // If not specified, falls back to AWSSecretsConfig for backward compatibility
+    // +optional
+    SecretStorageConfig *SecretStorageConfig `json:"secretStorageConfig,omitempty"`
 
-	// NetworkAccessConfig defines IP access provisioning
-	NetworkAccessConfig NetworkAccessConfig `json:"networkAccessConfig,omitempty"`
+    // AWSSecretsConfig defines where to store the API key in AWS Secrets Manager
+    // DEPRECATED: Use SecretStorageConfig instead. Kept for backward compatibility.
+    // +optional
+    AWSSecretsConfig *AWSSecretsManagerReference `json:"awsSecretsConfig,omitempty"`
+
+    // NetworkAccessConfig defines IP access provisioning
+    // +optional
+    NetworkAccessConfig NetworkAccessConfig `json:"networkAccessConfig,omitempty"`
 }
 
 // ===============================================================
@@ -99,105 +166,148 @@ type OrganizationParameters struct {
 
 // OrganizationObservation contains the observed state of the Organization
 type OrganizationObservation struct {
-	// OrgID is the MongoDB Atlas organization ID
-	OrgID string `json:"orgID,omitempty"`
+    // OrgID is the MongoDB Atlas organization ID
+    // +optional
+    OrgID string `json:"orgID,omitempty"`
 
-	// OrgName is the name of the organization
-	OrgName string `json:"orgName,omitempty"`
+    // OrgName is the name of the organization
+    // +optional
+    OrgName string `json:"orgName,omitempty"`
 
-	// SecretName is the name of the AWS secret
-	SecretName string `json:"secretName,omitempty"`
+    // SecretName is the name of the secret (AWS or Kubernetes)
+    // +optional
+    SecretName string `json:"secretName,omitempty"`
 
-	// SecretARN is the ARN of the AWS secret
-	SecretARN string `json:"secretARN,omitempty"`
+    // SecretARN is the ARN of the AWS secret (only for AWS storage)
+    // +optional
+    SecretARN string `json:"secretARN,omitempty"`
 
-	// KMSKeyID is the KMS key used to encrypt the secret (optional informational field)
-	KMSKeyID string `json:"kmsKeyId,omitempty"`
+    // KMSKeyID is the KMS key used to encrypt the secret (optional informational field)
+    // +optional
+    KMSKeyID string `json:"kmsKeyId,omitempty"`
 
-	// CreatedAt is when the organization was created
-	CreatedAt *metav1.Time `json:"createdAt,omitempty"`
+    // SecretNamespace is the Kubernetes namespace (only for Kubernetes storage)
+    // +optional
+    SecretNamespace string `json:"secretNamespace,omitempty"`
 
-	// ===============================================================
-	// API Key Audit Fields
-	// ===============================================================
+    // SecretStorageType indicates where the secret is stored (AWS or Kubernetes)
+    // +optional
+    SecretStorageType string `json:"secretStorageType,omitempty"`
 
-	// CreatedWithCredentialSource indicates the credential source used (e.g., "AWS")
-	CreatedWithCredentialSource string `json:"createdWithCredentialSource,omitempty"`
+    // CreatedAt is when the organization was created
+    // +optional
+    CreatedAt *metav1.Time `json:"createdAt,omitempty"`
 
-	// CreatedWithAPIKeyID is the masked API key ID used for creation
-	CreatedWithAPIKeyID string `json:"createdWithAPIKeyID,omitempty"`
+    // ===============================================================
+    // API Key Audit Fields
+    // ===============================================================
 
-	// APIKeyRoles are the roles assigned to the API key
-	APIKeyRoles []string `json:"apiKeyRoles,omitempty"`
+    // CreatedWithCredentialSource indicates the credential source used (e.g., "AWS", "Kubernetes")
+    // +optional
+    CreatedWithCredentialSource string `json:"createdWithCredentialSource,omitempty"`
 
-	// ===============================================================
-	// Deletion Tracking
-	// ===============================================================
+    // CreatedWithAPIKeyID is the masked API key ID used for creation
+    // +optional
+    CreatedWithAPIKeyID string `json:"createdWithAPIKeyID,omitempty"`
 
-	// LastDeletionAttemptTime is the timestamp of the last deletion attempt
-	LastDeletionAttemptTime *metav1.Time `json:"lastDeletionAttemptTime,omitempty"`
+    // APIKeyRoles are the roles assigned to the API key
+    // +optional
+    APIKeyRoles []string `json:"apiKeyRoles,omitempty"`
 
-	// DeletionAttemptCount tracks how many times deletion has been attempted
-	DeletionAttemptCount int `json:"deletionAttemptCount,omitempty"`
+    // ===============================================================
+    // Deletion Tracking
+    // ===============================================================
 
-	// LastDeletionAttemptError contains the error message from the last deletion attempt
-	LastDeletionAttemptError string `json:"lastDeletionAttemptError,omitempty"`
+    // LastDeletionAttemptTime is the timestamp of the last deletion attempt
+    // +optional
+    LastDeletionAttemptTime *metav1.Time `json:"lastDeletionAttemptTime,omitempty"`
 
-	// DeletionPhase tracks the current phase of the deletion state machine
-	DeletionPhase string `json:"deletionPhase,omitempty"`
+    // DeletionAttemptCount tracks how many times deletion has been attempted
+    // +optional
+    DeletionAttemptCount int `json:"deletionAttemptCount,omitempty"`
 
-	// EnforcementDisabledAt is when apiAccessListRequired was disabled during deletion
-	EnforcementDisabledAt *metav1.Time `json:"enforcementDisabledAt,omitempty"`
+    // LastDeletionAttemptError contains the error message from the last deletion attempt
+    // +optional
+    LastDeletionAttemptError string `json:"lastDeletionAttemptError,omitempty"`
 
-	// IPsCleanedUp indicates whether IPs have been cleaned up during deletion
-	IPsCleanedUp bool `json:"ipsCleanedUp,omitempty"`
+    // DeletionPhase tracks the current phase of the deletion state machine
+    // +optional
+    DeletionPhase string `json:"deletionPhase,omitempty"`
 
-	// DependenciesChecked indicates whether dependencies have been checked
-	DependenciesChecked bool `json:"dependenciesChecked,omitempty"`
+    // EnforcementDisabledAt is when apiAccessListRequired was disabled during deletion
+    // +optional
+    EnforcementDisabledAt *metav1.Time `json:"enforcementDisabledAt,omitempty"`
 
-	// LastRateLimitHitTime is when the last rate limit (429) was encountered
-	LastRateLimitHitTime *metav1.Time `json:"lastRateLimitHitTime,omitempty"`
+    // EnforcementDisabled indicates if API access list enforcement was disabled during deletion
+    // This prevents repeating enforcement disable on retry
+    // +optional
+    EnforcementDisabled bool `json:"enforcementDisabled,omitempty"`
 
-	// ForceDeleteAfterFailures indicates deletion failed and force delete is available
-	ForceDeleteAfterFailures bool `json:"forceDeleteAfterFailures,omitempty"`
+    // IPsCleanedUp indicates whether IPs have been cleaned up during deletion
+    // This prevents repeating IP cleanup on retry
+    // +optional
+    IPsCleanedUp bool `json:"ipsCleanedUp,omitempty"`
 
-	// ===============================================================
-	// State Tracking
-	// ===============================================================
+    // DependenciesChecked indicates whether dependencies have been checked
+    // +optional
+    DependenciesChecked bool `json:"dependenciesChecked,omitempty"`
 
-	// State represents the current state (PENDING, ACTIVE, DELETING, DELETED)
-	State *string `json:"state,omitempty"`
+    // LastRateLimitHitTime is when the last rate limit (429) was encountered
+    // +optional
+    LastRateLimitHitTime *metav1.Time `json:"lastRateLimitHitTime,omitempty"`
 
-	// DeletedAt is the timestamp when the organization was deleted
-	DeletedAt *metav1.Time `json:"deletedAt,omitempty"`
+    // ForceDeleteAfterFailures indicates deletion failed and force delete is available
+    // +optional
+    ForceDeleteAfterFailures bool `json:"forceDeleteAfterFailures,omitempty"`
 
-	// ===============================================================
-	// Org-level Enforcement Status
-	// ===============================================================
+    // ===============================================================
+    // State Tracking
+    // ===============================================================
 
-	// APIAccessListRequired indicates whether IP access list is required
-	APIAccessListRequired *bool `json:"apiAccessListRequired,omitempty"`
+    // State represents the current state (PENDING, ACTIVE, DELETING, DELETED)
+    // +optional
+    // +kubebuilder:validation:Enum=PENDING;ACTIVE;DELETING;DELETED
+    State *string `json:"state,omitempty"`
 
-	// LastEnforcementToggleTime is when apiAccessListRequired was last changed
-	LastEnforcementToggleTime *metav1.Time `json:"lastEnforcementToggleTime,omitempty"`
+    // DeletedAt is the timestamp when the organization was deleted
+    // +optional
+    DeletedAt *metav1.Time `json:"deletedAt,omitempty"`
 
-	// EnforcementError contains any error from enforcement operations
-	EnforcementError string `json:"enforcementError,omitempty"`
+    // ===============================================================
+    // Org-level Enforcement Status
+    // ===============================================================
 
-	// ===============================================================
-	// IP Access Status
-	// ===============================================================
-	// ProvisionedIPs is the list of IPs provisioned to the access list
-	ProvisionedIPs []IPAccessEntry `json:"provisionedIPs,omitempty"`
+    // APIAccessListRequired indicates whether IP access list is required for the org
+    // +optional
+    APIAccessListRequired *bool `json:"apiAccessListRequired,omitempty"`
 
-	// IPAccessEntryCount is the number of IPs in the access list
-	IPAccessEntryCount int `json:"ipAccessEntryCount,omitempty"`
+    // LastEnforcementToggleTime is when apiAccessListRequired was last changed
+    // +optional
+    LastEnforcementToggleTime *metav1.Time `json:"lastEnforcementToggleTime,omitempty"`
 
-	// LastIPAccessUpdate is the timestamp of the last IP access list update
-	LastIPAccessUpdate *metav1.Time `json:"lastIPAccessUpdate,omitempty"`
+    // EnforcementError contains any error from enforcement operations
+    // +optional
+    EnforcementError string `json:"enforcementError,omitempty"`
 
-	// IPAccessError contains any error from IP access list operations
-	IPAccessError string `json:"ipAccessError,omitempty"`
+    // ===============================================================
+    // IP Access Status
+    // ===============================================================
+
+    // ProvisionedIPs is the list of IPs provisioned to the access list
+    // +optional
+    ProvisionedIPs []IPAccessEntry `json:"provisionedIPs,omitempty"`
+
+    // IPAccessEntryCount is the number of IPs in the access list
+    // +optional
+    IPAccessEntryCount int `json:"ipAccessEntryCount,omitempty"`
+
+    // LastIPAccessUpdate is the timestamp of the last IP access list update
+    // +optional
+    LastIPAccessUpdate *metav1.Time `json:"lastIPAccessUpdate,omitempty"`
+
+    // IPAccessError contains any error from IP access list operations
+    // +optional
+    IPAccessError string `json:"ipAccessError,omitempty"`
 }
 
 // ===============================================================
@@ -206,14 +316,14 @@ type OrganizationObservation struct {
 
 // OrganizationSpec defines the desired state of Organization
 type OrganizationSpec struct {
-	xpv1.ResourceSpec `json:",inline"`
-	ForProvider       OrganizationParameters `json:"forProvider"`
+    xpv1.ResourceSpec `json:",inline"`
+    ForProvider       OrganizationParameters `json:"forProvider"`
 }
 
 // OrganizationStatus defines the observed state of Organization
 type OrganizationStatus struct {
-	xpv1.ResourceStatus `json:",inline"`
-	AtProvider          OrganizationObservation `json:"atProvider,omitempty"`
+    xpv1.ResourceStatus `json:",inline"`
+    AtProvider          OrganizationObservation `json:"atProvider,omitempty"`
 }
 
 // ===============================================================
@@ -225,28 +335,28 @@ type OrganizationStatus struct {
 // +kubebuilder:printcolumn:name="SYNCED",type="string",JSONPath=".status.conditions[?(@.type=='Synced')].status"
 // +kubebuilder:printcolumn:name="ORG-ID",type="string",JSONPath=".status.atProvider.orgID"
 // +kubebuilder:printcolumn:name="STATE",type="string",JSONPath=".status.atProvider.state"
+// +kubebuilder:printcolumn:name="STORAGE",type="string",JSONPath=".status.atProvider.secretStorageType"
 // +kubebuilder:printcolumn:name="SECRET-NAME",type="string",JSONPath=".status.atProvider.secretName"
-// +kubebuilder:printcolumn:name="SECRET-ARN",type="string",JSONPath=".status.atProvider.secretARN"
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,categories={crossplane,managed,mongodb}
 
 // Organization is the Schema for the organizations API
 type Organization struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+    metav1.TypeMeta   `json:",inline"`
+    metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   OrganizationSpec   `json:"spec"`
-	Status OrganizationStatus `json:"status,omitempty"`
+    Spec   OrganizationSpec   `json:"spec"`
+    Status OrganizationStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
 // OrganizationList contains a list of Organization
 type OrganizationList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Organization `json:"items"`
+    metav1.TypeMeta `json:",inline"`
+    metav1.ListMeta `json:"metadata,omitempty"`
+    Items           []Organization `json:"items"`
 }
 
 // ===============================================================
@@ -254,10 +364,10 @@ type OrganizationList struct {
 // ===============================================================
 
 var (
-	OrganizationKind             = reflect.TypeOf(Organization{}).Name()
-	OrganizationGroupKind        = schema.GroupKind{Group: Group, Kind: OrganizationKind}.String()
-	OrganizationKindAPIVersion   = OrganizationKind + "." + SchemeGroupVersion.String()
-	OrganizationGroupVersionKind = SchemeGroupVersion.WithKind(OrganizationKind)
+    OrganizationKind             = reflect.TypeOf(Organization{}).Name()
+    OrganizationGroupKind        = schema.GroupKind{Group: Group, Kind: OrganizationKind}.String()
+    OrganizationKindAPIVersion   = OrganizationKind + "." + SchemeGroupVersion.String()
+    OrganizationGroupVersionKind = SchemeGroupVersion.WithKind(OrganizationKind)
 )
 
 // ===============================================================
@@ -265,17 +375,47 @@ var (
 // ===============================================================
 
 const (
-	// OrganizationStatePending indicates the organization is being created
-	OrganizationStatePending = "PENDING"
+    // OrganizationStatePending indicates the organization is being created
+    OrganizationStatePending = "PENDING"
 
-	// OrganizationStateActive indicates the organization is active
-	OrganizationStateActive = "ACTIVE"
+    // OrganizationStateActive indicates the organization is active
+    OrganizationStateActive = "ACTIVE"
 
-	// OrganizationStateDeleting indicates the organization is being deleted
-	OrganizationStateDeleting = "DELETING"
+    // OrganizationStateDeleting indicates the organization is being deleted
+    OrganizationStateDeleting = "DELETING"
 
-	// OrganizationStateDeleted indicates the organization has been deleted
-	OrganizationStateDeleted = "DELETED"
+    // OrganizationStateDeleted indicates the organization has been deleted
+    OrganizationStateDeleted = "DELETED"
+)
+
+// ===============================================================
+// Deletion Phase Constants
+// ===============================================================
+
+const (
+    // DeletionPhaseInitial is the initial phase of deletion
+    DeletionPhaseInitial = "Initial"
+
+    // DeletionPhaseDisablingEnforcement is when enforcement is being disabled
+    DeletionPhaseDisablingEnforcement = "DisablingEnforcement"
+
+    // DeletionPhaseCleaningIPs is when IPs are being cleaned up
+    DeletionPhaseCleaningIPs = "CleaningIPs"
+
+    // DeletionPhaseDeletingOrg is when the org is being deleted from Atlas
+    DeletionPhaseDeletingOrg = "DeletingOrg"
+
+    // DeletionPhaseVerifying is when deletion is being verified
+    DeletionPhaseVerifying = "Verifying"
+
+    // DeletionPhaseDeletingSecret is when the secret is being deleted
+    DeletionPhaseDeletingSecret = "DeletingSecret"
+
+    // DeletionPhaseRemovingFinalizers is when finalizers are being removed
+    DeletionPhaseRemovingFinalizers = "RemovingFinalizers"
+
+    // DeletionPhaseCompleted indicates deletion is complete
+    DeletionPhaseCompleted = "Completed"
 )
 
 // ===============================================================
@@ -283,10 +423,23 @@ const (
 // ===============================================================
 
 const (
-	// FinalizerOrganizationCleanup is the finalizer for organization cleanup
-	FinalizerOrganizationCleanup = "organization.platform.allianz.io/cleanup"
+    // FinalizerOrganizationCleanup is the finalizer for organization cleanup
+    FinalizerOrganizationCleanup = "organization.platform.allianz.io/cleanup"
+
+    // CrossplaneManagedFinalizer is the Crossplane managed resource finalizer
+    CrossplaneManagedFinalizer = "finalizer.managedresource.crossplane.io"
+)
+
+// ===============================================================
+// Annotation Constants
+// ===============================================================
+
+const (
+    // AnnotationForceDelete can be set to "true" to force delete an organization
+    // even if Atlas deletion fails after multiple attempts
+    AnnotationForceDelete = "organization.platform.allianz.io/force-delete"
 )
 
 func init() {
-	SchemeBuilder.Register(&Organization{}, &OrganizationList{})
+    SchemeBuilder.Register(&Organization{}, &OrganizationList{})
 }

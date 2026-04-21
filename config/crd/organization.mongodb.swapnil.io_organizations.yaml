@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: organizations.organization.mongodb.swapnil.io
 spec:
   group: organization.mongodb.swapnil.io
@@ -31,11 +31,11 @@ spec:
     - jsonPath: .status.atProvider.state
       name: STATE
       type: string
+    - jsonPath: .status.atProvider.secretStorageType
+      name: STORAGE
+      type: string
     - jsonPath: .status.atProvider.secretName
       name: SECRET-NAME
-      type: string
-    - jsonPath: .status.atProvider.secretARN
-      name: SECRET-ARN
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: AGE
@@ -93,14 +93,16 @@ spec:
                         description: Roles assigned to the API key
                         items:
                           type: string
+                        minItems: 1
                         type: array
                     required:
                     - description
                     - roles
                     type: object
                   awsSecretsConfig:
-                    description: AWSSecretsConfig defines where to store the API key
-                      in AWS Secrets Manager
+                    description: |-
+                      AWSSecretsConfig defines where to store the API key in AWS Secrets Manager
+                      DEPRECATED: Use SecretStorageConfig instead. Kept for backward compatibility.
                     properties:
                       kmsKeyId:
                         description: Optional custom AWS KMS key.
@@ -157,22 +159,63 @@ spec:
                               type: string
                             ip:
                               description: IP is a single IPv4 address (e.g., "203.0.113.45")
+                              pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}$
                               type: string
                           required:
                           - ip
                           type: object
                         type: array
-                    required:
-                    - autoCleanup
-                    - enabled
                     type: object
                   ownerID:
                     description: OwnerID is the MongoDB Atlas user ID who will own
                       the organization
                     type: string
+                  secretStorageConfig:
+                    description: |-
+                      SecretStorageConfig defines where to store the API key (preferred)
+                      If not specified, falls back to AWSSecretsConfig for backward compatibility
+                    properties:
+                      aws:
+                        description: AWS configuration (used when Type is "AWS")
+                        properties:
+                          kmsKeyId:
+                            description: Optional custom AWS KMS key.
+                            type: string
+                          region:
+                            description: Region where the MongoDB API key secret will
+                              be stored.
+                            type: string
+                          secretName:
+                            description: |-
+                              SecretName is appended to "product/mongodb/".
+                              If omitted, defaults to metadata.name.
+                            type: string
+                        required:
+                        - region
+                        type: object
+                      kubernetes:
+                        description: Kubernetes configuration (used when Type is "Kubernetes")
+                        properties:
+                          name:
+                            description: Name of the Kubernetes Secret (optional,
+                              defaults to {org-name}-mongodb-credentials)
+                            type: string
+                          namespace:
+                            description: Namespace where the secret will be created
+                              (optional, defaults to crossplane-system)
+                            type: string
+                        type: object
+                      type:
+                        description: Type specifies the storage backend (AWS or Kubernetes)
+                        enum:
+                        - AWS
+                        - Kubernetes
+                        type: string
+                    required:
+                    - type
+                    type: object
                 required:
                 - apiKey
-                - awsSecretsConfig
                 - ownerID
                 type: object
               managementPolicies:
@@ -389,7 +432,7 @@ spec:
                 properties:
                   apiAccessListRequired:
                     description: APIAccessListRequired indicates whether IP access
-                      list is required
+                      list is required for the org
                     type: boolean
                   apiKeyRoles:
                     description: APIKeyRoles are the roles assigned to the API key
@@ -406,7 +449,7 @@ spec:
                     type: string
                   createdWithCredentialSource:
                     description: CreatedWithCredentialSource indicates the credential
-                      source used (e.g., "AWS")
+                      source used (e.g., "AWS", "Kubernetes")
                     type: string
                   deletedAt:
                     description: DeletedAt is the timestamp when the organization
@@ -424,6 +467,11 @@ spec:
                   dependenciesChecked:
                     description: DependenciesChecked indicates whether dependencies
                       have been checked
+                    type: boolean
+                  enforcementDisabled:
+                    description: |-
+                      EnforcementDisabled indicates if API access list enforcement was disabled during deletion
+                      This prevents repeating enforcement disable on retry
                     type: boolean
                   enforcementDisabledAt:
                     description: EnforcementDisabledAt is when apiAccessListRequired
@@ -447,8 +495,9 @@ spec:
                       operations
                     type: string
                   ipsCleanedUp:
-                    description: IPsCleanedUp indicates whether IPs have been cleaned
-                      up during deletion
+                    description: |-
+                      IPsCleanedUp indicates whether IPs have been cleaned up during deletion
+                      This prevents repeating IP cleanup on retry
                     type: boolean
                   kmsKeyId:
                     description: KMSKeyID is the KMS key used to encrypt the secret
@@ -485,11 +534,8 @@ spec:
                     description: OrgName is the name of the organization
                     type: string
                   provisionedIPs:
-                    description: |-
-                      ===============================================================
-                      IP Access Status
-                      ===============================================================
-                      ProvisionedIPs is the list of IPs provisioned to the access list
+                    description: ProvisionedIPs is the list of IPs provisioned to
+                      the access list
                     items:
                       description: IPAccessEntry represents a single IP address in
                         the access list
@@ -509,20 +555,35 @@ spec:
                           type: string
                         ip:
                           description: IP is a single IPv4 address (e.g., "203.0.113.45")
+                          pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}$
                           type: string
                       required:
                       - ip
                       type: object
                     type: array
                   secretARN:
-                    description: SecretARN is the ARN of the AWS secret
+                    description: SecretARN is the ARN of the AWS secret (only for
+                      AWS storage)
                     type: string
                   secretName:
-                    description: SecretName is the name of the AWS secret
+                    description: SecretName is the name of the secret (AWS or Kubernetes)
+                    type: string
+                  secretNamespace:
+                    description: SecretNamespace is the Kubernetes namespace (only
+                      for Kubernetes storage)
+                    type: string
+                  secretStorageType:
+                    description: SecretStorageType indicates where the secret is stored
+                      (AWS or Kubernetes)
                     type: string
                   state:
                     description: State represents the current state (PENDING, ACTIVE,
                       DELETING, DELETED)
+                    enum:
+                    - PENDING
+                    - ACTIVE
+                    - DELETING
+                    - DELETED
                     type: string
                 type: object
               conditions:
