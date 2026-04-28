@@ -17,7 +17,7 @@ limitations under the License.
 
 package v1alpha1
 
-import xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+import xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
 
 // GetCondition of this Organization.
 func (mg *Organization) GetCondition(ct xpv1.ConditionType) xpv1.Condition {
@@ -37,19 +37,6 @@ func (mg *Organization) GetManagementPolicies() xpv1.ManagementPolicies {
 // GetProviderConfigReference of this Organization.
 func (mg *Organization) GetProviderConfigReference() *xpv1.Reference {
 	return mg.Spec.ProviderConfigReference
-}
-
-/*
-GetProviderReference of this Organization.
-Deprecated: Use GetProviderConfigReference.
-*/
-func (mg *Organization) GetProviderReference() *xpv1.Reference {
-	return mg.Spec.ProviderReference
-}
-
-// GetPublishConnectionDetailsTo of this Organization.
-func (mg *Organization) GetPublishConnectionDetailsTo() *xpv1.PublishConnectionDetailsTo {
-	return mg.Spec.PublishConnectionDetailsTo
 }
 
 // GetWriteConnectionSecretToReference of this Organization.
@@ -75,19 +62,6 @@ func (mg *Organization) SetManagementPolicies(r xpv1.ManagementPolicies) {
 // SetProviderConfigReference of this Organization.
 func (mg *Organization) SetProviderConfigReference(r *xpv1.Reference) {
 	mg.Spec.ProviderConfigReference = r
-}
-
-/*
-SetProviderReference of this Organization.
-Deprecated: Use SetProviderConfigReference.
-*/
-func (mg *Organization) SetProviderReference(r *xpv1.Reference) {
-	mg.Spec.ProviderReference = r
-}
-
-// SetPublishConnectionDetailsTo of this Organization.
-func (mg *Organization) SetPublishConnectionDetailsTo(r *xpv1.PublishConnectionDetailsTo) {
-	mg.Spec.PublishConnectionDetailsTo = r
 }
 
 // SetWriteConnectionSecretToReference of this Organization.

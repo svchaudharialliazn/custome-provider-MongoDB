@@ -5,7 +5,7 @@ metadata:
 spec:
   forProvider:
     vpcId: vpc-03a75e9d856407da5
-    serviceName: com.amazonaws.vpce.eu-central-1.vpce-svc-04b62dd99e342e0b7
+    serviceName: com.amazonaws.vpce.eu-central-1.vpce-svc-05eda7fee5676d6a3
     accountId: "198927051560"
     subnetIds:
     - subnet-000ff8403aca2347d
@@ -15,4 +15,4 @@ spec:
     ipAddressType: ipv4
     vpcEndpointType: Interface
   providerConfigRef:
-    name: default
+    name: vpc-provider

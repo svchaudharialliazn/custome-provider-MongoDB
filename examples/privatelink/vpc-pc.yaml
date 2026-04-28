@@ -1,7 +1,7 @@
 apiVersion: mongodb.swapnil.io/v1alpha1
 kind: ProviderConfig
 metadata:
-  name: default
+  name: vpc-provider
 spec:
 #  region: eu-central-1
   credentials:

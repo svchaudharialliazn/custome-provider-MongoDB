@@ -15,21 +15,19 @@ import (
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
-    xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
-    "github.com/crossplane/crossplane-runtime/pkg/connection"
-    "github.com/crossplane/crossplane-runtime/pkg/controller"
-    "github.com/crossplane/crossplane-runtime/pkg/event"
-    "github.com/crossplane/crossplane-runtime/pkg/logging"
-    "github.com/crossplane/crossplane-runtime/pkg/meta"
-    "github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
-    "github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
-    "github.com/crossplane/crossplane-runtime/pkg/resource"
+    xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
+    "github.com/crossplane/crossplane-runtime/v2/pkg/controller"
+    "github.com/crossplane/crossplane-runtime/v2/pkg/event"
+    "github.com/crossplane/crossplane-runtime/v2/pkg/logging"
+    "github.com/crossplane/crossplane-runtime/v2/pkg/meta"
+    "github.com/crossplane/crossplane-runtime/v2/pkg/ratelimiter"
+    "github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
+    "github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 
     "github.com/svchaudharialliazn/swapnil-provider-mongodb/apis/organization/v1alpha1"
     apisv1alpha1 "github.com/svchaudharialliazn/swapnil-provider-mongodb/apis/v1alpha1"
     awsclient "github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/clients/aws"
     svc "github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/clients/mongodb"
-    "github.com/svchaudharialliazn/swapnil-provider-mongodb/internal/controller/features"
 )
 
 const (
@@ -40,12 +38,6 @@ const (
     errAWSClient       = "cannot create AWS client"
     secretPrefix       = "product/mongodb/"
 
-    // Custom finalizer for cleanup operations
-    FinalizerOrganizationCleanup = "organization.platform.allianz.io/cleanup"
-
-    // Crossplane managed resource finalizer - must be removed for CR to be deleted
-    crossplaneManagedFinalizer = "finalizer.managedresource.crossplane.io"
-
     defaultK8sSecretNamespace = "crossplane-system"
 )
 
@@ -53,19 +45,12 @@ const (
 func Setup(mgr ctrl.Manager, o controller.Options) error {
     name := managed.ControllerName(v1alpha1.OrganizationGroupKind)
 
-    cps := []managed.ConnectionPublisher{
-        managed.NewAPISecretPublisher(mgr.GetClient(), mgr.GetScheme()),
-    }
-    if o.Features.Enabled(features.EnableAlphaExternalSecretStores) {
-        cps = append(cps, connection.NewDetailsManager(mgr.GetClient(), apisv1alpha1.StoreConfigGroupVersionKind))
-    }
-
     r := managed.NewReconciler(
         mgr,
         resource.ManagedKind(v1alpha1.OrganizationGroupVersionKind),
-        managed.WithExternalConnecter(&connector{
+        managed.WithExternalConnector(&connector{
             kube:           mgr.GetClient(),
-            usage:          resource.NewProviderConfigUsageTracker(mgr.GetClient(), &apisv1alpha1.ProviderConfigUsage{}),
+            usage:          resource.NewLegacyProviderConfigUsageTracker(mgr.GetClient(), &apisv1alpha1.ProviderConfigUsage{}),
             logger:         o.Logger,
             newServiceFn:   svc.NewService,
             newAWSClientFn: awsclient.NewClient,
@@ -73,7 +58,6 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
         managed.WithInitializers(),
         managed.WithLogger(o.Logger.WithValues("controller", name)),
         managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
-        managed.WithConnectionPublishers(cps...),
     )
 
     return ctrl.NewControllerManagedBy(mgr).
@@ -85,7 +69,7 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
 
 type connector struct {
     kube           client.Client
-    usage          resource.Tracker
+    usage          resource.LegacyTracker
     logger         logging.Logger
     newServiceFn   func(creds svc.Credentials) svc.Service
     newAWSClientFn func(ctx context.Context, region string) (*awsclient.Client, error)
@@ -98,7 +82,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
         return nil, errors.New(errNotOrganization)
     }
 
-    if err := c.usage.Track(ctx, mg); err != nil {
+    if err := c.usage.Track(ctx, cr); err != nil {
         return nil, errors.Wrap(err, errTrackPCUsage)
     }
 
@@ -462,68 +446,6 @@ func (c *external) fetchOrgCredentials(ctx context.Context, cr *v1alpha1.Organiz
     }, nil
 }
 
-// removeAllFinalizers removes both custom and Crossplane finalizers to allow CR deletion
-func (c *external) removeAllFinalizers(ctx context.Context, cr *v1alpha1.Organization) error {
-    latest := &v1alpha1.Organization{}
-    if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
-        if apierrors.IsNotFound(err) {
-            c.logger.Debug("Resource already deleted, no finalizers to remove")
-            return nil
-        }
-        return errors.Wrap(err, "re-get before removing finalizers")
-    }
-
-    finalizersToRemove := []string{
-        FinalizerOrganizationCleanup,
-        crossplaneManagedFinalizer,
-    }
-
-    modified := false
-    for _, finalizer := range finalizersToRemove {
-        if meta.FinalizerExists(latest, finalizer) {
-            meta.RemoveFinalizer(latest, finalizer)
-            modified = true
-            c.logger.Info("Removing finalizer", "finalizer", finalizer)
-        }
-    }
-
-    if !modified {
-        c.logger.Debug("No finalizers to remove")
-        return nil
-    }
-
-    if err := c.kube.Update(ctx, latest); err != nil {
-        if apierrors.IsConflict(err) {
-            // Retry once on conflict
-            if err2 := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err2 != nil {
-                if apierrors.IsNotFound(err2) {
-                    return nil
-                }
-                return errors.Wrap(err2, "re-get after conflict for finalizer removal")
-            }
-            for _, finalizer := range finalizersToRemove {
-                if meta.FinalizerExists(latest, finalizer) {
-                    meta.RemoveFinalizer(latest, finalizer)
-                }
-            }
-            if err3 := c.kube.Update(ctx, latest); err3 != nil {
-                if apierrors.IsNotFound(err3) {
-                    return nil
-                }
-                return errors.Wrap(err3, "persisting finalizer removal after conflict")
-            }
-            return nil
-        }
-        if apierrors.IsNotFound(err) {
-            return nil
-        }
-        return errors.Wrap(err, "persisting finalizer removal")
-    }
-
-    c.logger.Info("Successfully removed all finalizers", "name", cr.Name)
-    return nil
-}
-
 // enableAPIAccessListRequired enables the "Require IP Access List for the Atlas Administration API"
 func (c *external) enableAPIAccessListRequired(
     ctx context.Context,
@@ -866,20 +788,6 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
             return managed.ExternalCreation{}, errors.Wrap(err, "updating status after reuse")
         }
         return managed.ExternalCreation{}, nil
-    }
-
-    // Add our cleanup finalizer up front.
-    if !meta.FinalizerExists(cr, FinalizerOrganizationCleanup) {
-        latest := &v1alpha1.Organization{}
-        if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err != nil {
-            return managed.ExternalCreation{}, errors.Wrap(err, "re-get before persisting finalizer")
-        }
-        if !meta.FinalizerExists(latest, FinalizerOrganizationCleanup) {
-            meta.AddFinalizer(latest, FinalizerOrganizationCleanup)
-            if err := c.kube.Update(ctx, latest); err != nil {
-                return managed.ExternalCreation{}, errors.Wrap(err, "failed to persist finalizer on creation")
-            }
-        }
     }
 
     c.logger.Info("Creating MongoDB Atlas Organization", "name", cr.Name, "ownerID", cr.Spec.ForProvider.OwnerID)
@@ -1285,14 +1193,49 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 // After confirmed deletion, removes ALL finalizers including Crossplane's
 // ===============================================================
 
-func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
+func (c *external) Delete(ctx context.Context, mg resource.Managed) (managed.ExternalDelete, error) {
+    return managed.ExternalDelete{}, c.delete(ctx, mg)
+}
+
+func (c *external) Disconnect(_ context.Context) error {
+    return nil
+}
+
+func (c *external) delete(ctx context.Context, mg resource.Managed) error {
     cr := mg.(*v1alpha1.Organization)
     orgID := meta.GetExternalName(cr)
 
-    // If nothing external was created, just remove finalizers and return.
+    // Cleanup IPs if requested
+    if cr.Spec.ForProvider.NetworkAccessConfig.AutoCleanup &&
+        len(cr.Status.AtProvider.ProvisionedIPs) > 0 {
+
+        c.logger.Info("Cleaning up provisioned IPs during organization deletion",
+            "orgID", orgID, "ipCount", len(cr.Status.AtProvider.ProvisionedIPs))
+
+        orgCreds, err := c.fetchOrgCredentials(ctx, cr)
+        if err == nil && orgCreds != nil {
+            orgService := c.newServiceFn(*orgCreds)
+            apiKeyID, _ := orgService.FindAPIKeyID(ctx, orgID, orgCreds.PublicKey, "")
+            if apiKeyID == "" {
+                c.logger.Info("Could not resolve API key ID for cleanup; skipping IP removals", "orgID", orgID)
+            } else {
+                for _, ipEntry := range cr.Status.AtProvider.ProvisionedIPs {
+                    if rerr := orgService.RemoveIPFromAPIKeyAccessList(ctx, orgID, apiKeyID, ipEntry.IP); rerr != nil {
+                        c.logger.Info("Failed to remove IP during cleanup (continuing)", "ip", ipEntry.IP, "error", rerr)
+                    } else {
+                        c.logger.Info("Removed IP during cleanup", "ip", ipEntry.IP)
+                    }
+                }
+            }
+        } else {
+            c.logger.Info("Could not fetch credentials for IP cleanup", "error", err)
+        }
+    }
+
+    // If nothing external was created, just delete the secret and return.
     if orgID == "" {
-        c.logger.Info("No external orgID present — removing all finalizers")
-        return c.removeAllFinalizers(ctx, cr)
+        c.logger.Info("No external orgID present — cleaning up secret")
+        return c.cleanupSecretsAfterDelete(ctx, cr, metav1.Now())
     }
 
     c.logger.Info("Starting deletion flow", "name", cr.Name, "orgID", orgID)
@@ -1302,184 +1245,61 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
     cr.Status.AtProvider.DeletionAttemptCount++
     stateDeleting := v1alpha1.OrganizationStateDeleting
     cr.Status.AtProvider.State = &stateDeleting
-    _ = c.updateStatusWithRetry(ctx, cr)
+    if err := c.updateStatusWithRetry(ctx, cr); err != nil {
+        c.logger.Debug("warning: failed to persist deletion attempt status (continuing)", "error", err)
+    }
 
-    // ===============================================================
-    // Step 1: Fetch org-specific credentials
-    // ===============================================================
-    c.logger.Info("Fetching org-specific credentials for deletion", "orgID", orgID)
+    // Optional pre-verify using parent credentials
+    c.logger.Info("Checking if organization still exists", "orgID", orgID)
+    verifyErr := c.client.VerifyOrganizationDeletion(ctx, orgID)
+    if verifyErr == nil || svc.IsNotFoundError(verifyErr) {
+        c.logger.Info("Organization already deleted — performing cleanup")
+        return c.cleanupSecretsAfterDelete(ctx, cr, now)
+    }
+    if isAtlasTransientOrOpaqueDeleteErr(verifyErr) {
+        c.logger.Info("Atlas verify returned transient/opaque error — treating as deleted", "orgID", orgID, "error", verifyErr)
+        return c.cleanupSecretsAfterDelete(ctx, cr, now)
+    }
+
+    // Fetch org-specific credentials
     orgCreds, err := c.fetchOrgCredentials(ctx, cr)
     if err != nil {
+        // Secret is gone — we can't delete via the org key anymore.
+        // Treat as already cleaned up; the Atlas org must be removed manually.
+        if strings.Contains(err.Error(), "ResourceNotFoundException") ||
+            strings.Contains(err.Error(), "can't find the specified secret") {
+            c.logger.Info("Org credential secret missing — skipping Atlas delete and finalizing cleanup", "error", err)
+            return c.cleanupSecretsAfterDelete(ctx, cr, now)
+        }
         c.logger.Info("Unable to fetch org credentials for deletion", "error", err)
-
-        // If credentials are gone, check if org still exists using parent credentials
-        c.logger.Info("Checking if org exists using parent credentials")
-        verifyErr := c.client.VerifyOrganizationDeletion(ctx, orgID)
-
-        // 404 means org is already deleted - we can cleanup
-        if svc.IsNotFoundError(verifyErr) || isNotFoundError(verifyErr) {
-            c.logger.Info("Organization already deleted (404) — performing cleanup")
-            return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-        }
-
-        // 401 with parent creds might mean org doesn't exist or parent can't see it
-        // Try to proceed with cleanup if we can't verify
-        if isUnauthorizedError(verifyErr) {
-            c.logger.Info("Cannot verify org status (401) and credentials missing — attempting cleanup")
-            return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-        }
-
         cr.Status.AtProvider.LastDeletionAttemptError = err.Error()
         cr.SetConditions(xpv1.ReconcileError(err))
         _ = c.updateStatusWithRetry(ctx, cr)
         return errors.Wrap(err, "failed to fetch org credentials for deletion")
     }
 
-    c.logger.Info("Successfully fetched org credentials",
-        "orgID", orgID,
-        "publicKey", maskAPIKey(orgCreds.PublicKey))
-
-    // Create service client using ORG's credentials
     orgService := c.newServiceFn(*orgCreds)
 
-    // ===============================================================
-    // Step 2: Check if organization still exists using ORG credentials
-    // ===============================================================
-    c.logger.Info("Checking if organization still exists using org credentials", "orgID", orgID)
-    verifyErr := orgService.VerifyOrganizationDeletion(ctx, orgID)
-
-    // 404 = org already deleted
-    if svc.IsNotFoundError(verifyErr) || isNotFoundError(verifyErr) {
-        c.logger.Info("Organization confirmed deleted (404) — performing cleanup")
-        return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-    }
-
-    // 401 = credentials invalid = org was deleted (credentials get invalidated when org is deleted)
-    if isUnauthorizedError(verifyErr) {
-        c.logger.Info("Got 401 with org credentials - org likely deleted, credentials invalidated — performing cleanup")
-        return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-    }
-
-    // ===============================================================
-    // Step 3: Track deletion phases to avoid repeating completed steps
-    // ===============================================================
-    ipsCleanedUp := cr.Status.AtProvider.IPsCleanedUp
-    enforcementDisabled := cr.Status.AtProvider.EnforcementDisabled
-
-    // ===============================================================
-    // Step 4: Cleanup IPs if not already done
-    // ===============================================================
-    if !ipsCleanedUp && cr.Spec.ForProvider.NetworkAccessConfig.AutoCleanup &&
-        len(cr.Status.AtProvider.ProvisionedIPs) > 0 {
-
-        c.logger.Info("Cleaning up provisioned IPs during organization deletion",
-            "orgID", orgID, "ipCount", len(cr.Status.AtProvider.ProvisionedIPs))
-
-        apiKeyID, findErr := orgService.FindAPIKeyID(ctx, orgID, orgCreds.PublicKey, "")
-        if findErr != nil || apiKeyID == "" {
-            c.logger.Info("Could not find API key ID for IP cleanup", "error", findErr)
-        } else {
-            for _, ipEntry := range cr.Status.AtProvider.ProvisionedIPs {
-                if err := orgService.RemoveIPFromAPIKeyAccessList(ctx, orgID, apiKeyID, ipEntry.IP); err != nil {
-                    if isNotFoundError(err) || svc.IsNotFoundError(err) {
-                        c.logger.Debug("IP already removed or never existed", "ip", ipEntry.IP)
-                    } else if strings.Contains(strings.ToLower(err.Error()), "cannot remove caller") {
-                        c.logger.Debug("Cannot remove caller's IP (expected)", "ip", ipEntry.IP)
-                    } else {
-                        c.logger.Info("Failed to remove IP during cleanup (continuing)", "ip", ipEntry.IP, "error", err)
-                    }
-                } else {
-                    c.logger.Info("Removed IP during cleanup", "ip", ipEntry.IP)
-                }
-            }
-        }
-
-        // Mark IPs as cleaned up so we don't repeat this on retry
-        cr.Status.AtProvider.IPsCleanedUp = true
-        _ = c.updateStatusWithRetry(ctx, cr)
-    }
-
-    // ===============================================================
-    // Step 5: Disable API access list enforcement if not already done
-    // ===============================================================
-    if !enforcementDisabled && cr.Status.AtProvider.APIAccessListRequired != nil && *cr.Status.AtProvider.APIAccessListRequired {
-        c.logger.Info("Disabling apiAccessListRequired before deletion", "orgID", orgID)
-        if err := orgService.SetOrgAdminAPIIPEnforcement(ctx, orgID, false); err != nil {
-            c.logger.Info("Failed to disable apiAccessListRequired (continuing with deletion)", "error", err)
-        } else {
-            c.logger.Info("Successfully disabled apiAccessListRequired", "orgID", orgID)
-        }
-
-        // Mark enforcement as disabled so we don't repeat this on retry
-        cr.Status.AtProvider.EnforcementDisabled = true
-        _ = c.updateStatusWithRetry(ctx, cr)
-    }
-
-    // ===============================================================
-    // Step 6: Delete organization using ORG's credentials
-    // ===============================================================
-    c.logger.Info("Attempting to delete organization in Atlas using org credentials", "orgID", orgID)
+    c.logger.Info("Attempting to delete organization in Atlas", "orgID", orgID)
     err = orgService.DeleteOrganization(ctx, orgID)
 
     switch {
-    case err == nil:
-        c.logger.Info("Delete request succeeded, verifying deletion", "orgID", orgID)
-
-    case svc.IsNotFoundError(err) || isNotFoundError(err):
-        c.logger.Info("Organization not found (404) — cleaning up")
-        return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
+    case svc.IsNotFoundError(err):
+        c.logger.Info("Organization not found — cleaning up secrets")
+        return c.cleanupSecretsAfterDelete(ctx, cr, now)
 
     case isUnauthorizedError(err):
-        // 401 after delete might mean org was deleted and creds invalidated
-        c.logger.Info("Got 401 during delete - checking if org was actually deleted", "orgID", orgID)
-        // Verify using parent credentials
-        parentVerifyErr := c.client.VerifyOrganizationDeletion(ctx, orgID)
-        if svc.IsNotFoundError(parentVerifyErr) || isNotFoundError(parentVerifyErr) {
-            c.logger.Info("Organization confirmed deleted via parent creds — cleaning up")
-            return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-        }
-        // Org still exists, real auth problem
-        cr.Status.AtProvider.LastDeletionAttemptError = "unauthorized - ensure API key has ORG_OWNER role"
+        c.logger.Info("Unauthorized (401/403) during delete", "orgID", orgID, "error", err)
+        cr.Status.AtProvider.LastDeletionAttemptError = err.Error()
         cr.SetConditions(xpv1.ReconcileError(err))
         _ = c.updateStatusWithRetry(ctx, cr)
         return errors.Wrap(err, "unauthorized delete attempt")
 
-    case isAtlasTransientError(err):
-        // ===============================================================
-        // CRITICAL: After 500 error, check if org was actually deleted
-        // ===============================================================
-        c.logger.Info("Atlas returned 500 error during delete — checking if org was actually deleted", "orgID", orgID, "error", err)
-
-        // Verify if org still exists using org credentials
-        verifyAfter500 := orgService.VerifyOrganizationDeletion(ctx, orgID)
-
-        // 404 = org was deleted despite 500 error
-        if svc.IsNotFoundError(verifyAfter500) || isNotFoundError(verifyAfter500) {
-            c.logger.Info("Organization was actually deleted (404 after 500) — cleaning up")
-            return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
+    case err != nil:
+        if isAtlasTransientOrOpaqueDeleteErr(err) {
+            c.logger.Info("Atlas returned transient/opaque delete error — treating as deleted and performing cleanup", "orgID", orgID, "error", err)
+            return c.cleanupSecretsAfterDelete(ctx, cr, now)
         }
-
-        // 401 = credentials invalidated = org was deleted
-        if isUnauthorizedError(verifyAfter500) {
-            c.logger.Info("Got 401 after 500 - org likely deleted, credentials invalidated — cleaning up")
-            return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-        }
-
-        // Also check with parent credentials as fallback
-        parentVerifyErr := c.client.VerifyOrganizationDeletion(ctx, orgID)
-        if svc.IsNotFoundError(parentVerifyErr) || isNotFoundError(parentVerifyErr) {
-            c.logger.Info("Organization confirmed deleted via parent creds after 500 — cleaning up")
-            return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-        }
-
-        // Org still exists or another transient error - retry
-        c.logger.Info("Organization still exists after 500 error — will retry", "orgID", orgID)
-        cr.Status.AtProvider.LastDeletionAttemptError = err.Error()
-        cr.SetConditions(xpv1.ReconcileError(err))
-        _ = c.updateStatusWithRetry(ctx, cr)
-        return errors.Wrap(err, "transient error during delete, will retry")
-
-    default:
         c.logger.Info("Organization delete failed, will retry", "orgID", orgID, "error", err)
         cr.Status.AtProvider.LastDeletionAttemptError = err.Error()
         cr.SetConditions(xpv1.ReconcileError(err))
@@ -1487,72 +1307,64 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
         return errors.Wrap(err, "delete organization failed")
     }
 
-    // ===============================================================
-    // Step 7: Verify deletion
-    // ===============================================================
-    c.logger.Info("Verifying deletion using org credentials", "orgID", orgID)
+    // Verify deletion
+    c.logger.Info("Verifying deletion", "orgID", orgID)
     verifyErr = orgService.VerifyOrganizationDeletion(ctx, orgID)
-
-    // 404 = confirmed deleted
-    if svc.IsNotFoundError(verifyErr) || isNotFoundError(verifyErr) {
-        c.logger.Info("Organization deletion confirmed (404) — cleaning up")
-        return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-    }
-
-    // 401 = credentials invalidated = org was deleted
-    if isUnauthorizedError(verifyErr) {
-        c.logger.Info("Got 401 after deletion - org deleted, credentials invalidated — cleaning up")
-        return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
-    }
-
-    // Org still exists
-    if verifyErr == nil {
-        c.logger.Info("Organization still exists after delete request — will retry", "orgID", orgID)
-        cr.Status.AtProvider.LastDeletionAttemptError = "organization still exists after delete request"
-        _ = c.updateStatusWithRetry(ctx, cr)
-        return errors.New("organization still exists after delete request")
-    }
-
-    // Another transient error during verify - check with parent creds
-    if isAtlasTransientError(verifyErr) {
-        c.logger.Info("Got transient error during verify — checking with parent credentials", "error", verifyErr)
-        parentVerifyErr := c.client.VerifyOrganizationDeletion(ctx, orgID)
-        if svc.IsNotFoundError(parentVerifyErr) || isNotFoundError(parentVerifyErr) {
-            c.logger.Info("Organization confirmed deleted via parent creds — cleaning up")
-            return c.cleanupAfterConfirmedDeletion(ctx, cr, now)
+    if verifyErr != nil {
+        if isAtlasTransientOrOpaqueDeleteErr(verifyErr) {
+            c.logger.Info("Atlas verify returned transient/opaque error after delete request — treating as deleted", "orgID", orgID, "error", verifyErr)
+            return c.cleanupSecretsAfterDelete(ctx, cr, now)
+        }
+        if !svc.IsNotFoundError(verifyErr) {
+            c.logger.Info("Organization still exists after delete request", "orgID", orgID, "error", verifyErr)
+            cr.Status.AtProvider.LastDeletionAttemptError = "organization still exists after delete request"
+            _ = c.updateStatusWithRetry(ctx, cr)
+            return errors.Wrap(verifyErr, "organization delete verification failed")
         }
     }
 
-    c.logger.Info("Deletion verification failed — will retry", "orgID", orgID, "error", verifyErr)
-    cr.Status.AtProvider.LastDeletionAttemptError = verifyErr.Error()
-    _ = c.updateStatusWithRetry(ctx, cr)
-    return errors.Wrap(verifyErr, "organization delete verification failed")
+    c.logger.Info("Organization deletion verified — cleaning up secrets")
+    return c.cleanupSecretsAfterDelete(ctx, cr, now)
 }
 
-// cleanupAfterConfirmedDeletion removes secrets and ALL finalizers after org is confirmed deleted
-// This allows the CR and any associated Claim to be fully garbage collected
-func (c *external) cleanupAfterConfirmedDeletion(ctx context.Context, cr *v1alpha1.Organization, now metav1.Time) error {
+// isAtlasTransientOrOpaqueDeleteErr treats opaque/5xx/network errors as success
+// because Atlas frequently returns 500 after the org has actually been deleted.
+func isAtlasTransientOrOpaqueDeleteErr(err error) bool {
+    if err == nil {
+        return false
+    }
+    e := strings.ToLower(err.Error())
+    if strings.Contains(e, "api error 0") {
+        return true
+    }
+    if strings.Contains(e, "internal server error") || strings.Contains(e, "500") {
+        return true
+    }
+    if strings.Contains(e, "context canceled") || strings.Contains(e, "context cancelled") {
+        return true
+    }
+    if strings.Contains(e, "network error") || strings.Contains(e, "request canceled") || strings.Contains(e, "retryable") {
+        return true
+    }
+    if strings.Contains(e, "ip address") && strings.Contains(e, "is not allowed to access this resource") {
+        return true
+    }
+    return false
+}
+
+// cleanupSecretsAfterDelete deletes the AWS/K8s secret after org deletion
+// and force-removes the crossplane managed finalizer so the CR is garbage-collected.
+// Force removal is required when the Atlas org can't be verified as deleted
+// (e.g. the org-specific API key/secret is gone) — otherwise Observe would keep
+// reporting the external resource as existing and the reconciler would loop.
+func (c *external) cleanupSecretsAfterDelete(ctx context.Context, cr *v1alpha1.Organization, now metav1.Time) error {
     orgID := meta.GetExternalName(cr)
 
-    c.logger.Info("Starting cleanup after confirmed deletion", "orgID", orgID)
-
-    // Update status to deleted
-    stateDeleted := v1alpha1.OrganizationStateDeleted
-    cr.Status.AtProvider.State = &stateDeleted
-    cr.Status.AtProvider.DeletedAt = &now
-    cr.Status.AtProvider.LastDeletionAttemptError = ""
-    _ = c.updateStatusWithRetry(ctx, cr)
-
-    // ===============================================================
-    // Delete the secret first (best effort)
-    // ===============================================================
     currentStorageType := cr.Status.AtProvider.SecretStorageType
     if currentStorageType == string(v1alpha1.SecretStorageTypeKubernetes) {
         c.logger.Info("Deleting Kubernetes secret after org deletion", "orgID", orgID)
         if err := c.deleteK8sSecret(ctx, cr); err != nil {
-            c.logger.Info("Failed to delete Kubernetes secret (continuing with finalizer removal)", "error", err)
-        } else {
-            c.logger.Info("Successfully deleted Kubernetes secret")
+            c.logger.Info("Failed to delete Kubernetes secret (continuing)", "error", err)
         }
     } else if c.awsClient != nil {
         secretName := cr.Status.AtProvider.SecretName
@@ -1561,25 +1373,27 @@ func (c *external) cleanupAfterConfirmedDeletion(ctx context.Context, cr *v1alph
         }
         c.logger.Info("Deleting AWS secret after org deletion", "orgID", orgID, "secretName", secretName)
         if err := c.awsClient.DeleteSecret(ctx, secretName, true); err != nil {
-            c.logger.Info("Failed to delete AWS secret (continuing with finalizer removal)", "secretName", secretName, "error", err)
-        } else {
-            c.logger.Info("Successfully deleted AWS secret", "secretName", secretName)
+            c.logger.Info("Failed to delete AWS secret (continuing)", "secretName", secretName, "error", err)
         }
     }
 
-    // ===============================================================
-    // CRITICAL: Remove ALL finalizers to allow CR deletion
-    // This includes both our custom finalizer AND Crossplane's finalizer
-    // ===============================================================
-    c.logger.Info("Removing all finalizers to allow CR deletion", "name", cr.Name)
-    if err := c.removeAllFinalizers(ctx, cr); err != nil {
-        c.logger.Info("Failed to remove finalizers", "error", err)
-        return errors.Wrap(err, "failed to remove finalizers")
+    stateDeleted := v1alpha1.OrganizationStateDeleted
+    cr.Status.AtProvider.State = &stateDeleted
+    cr.Status.AtProvider.DeletedAt = &now
+    cr.Status.AtProvider.LastDeletionAttemptError = ""
+    _ = c.updateStatusWithRetry(ctx, cr)
+
+    // Force-remove the crossplane managed finalizer so the CR can be garbage collected.
+    latest := &v1alpha1.Organization{}
+    if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.Name}, latest); err == nil {
+        if meta.FinalizerExists(latest, "finalizer.managedresource.crossplane.io") {
+            meta.RemoveFinalizer(latest, "finalizer.managedresource.crossplane.io")
+            if err := c.kube.Update(ctx, latest); err != nil && !apierrors.IsNotFound(err) {
+                c.logger.Info("Failed to remove managed finalizer (continuing)", "error", err)
+            }
+        }
     }
 
-    c.logger.Info("Organization deletion completed successfully — CR will be garbage collected",
-        "orgID", orgID,
-        "name", cr.Name)
-
+    c.logger.Info("Organization deletion completed", "orgID", orgID)
     return nil
 }

@@ -17,7 +17,7 @@ limitations under the License.
 
 package v1alpha1
 
-import xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+import xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
 
 // GetCondition of this VPCEndpoint.
 func (mg *VPCEndpoint) GetCondition(ct xpv1.ConditionType) xpv1.Condition {
@@ -37,19 +37,6 @@ func (mg *VPCEndpoint) GetManagementPolicies() xpv1.ManagementPolicies {
 // GetProviderConfigReference of this VPCEndpoint.
 func (mg *VPCEndpoint) GetProviderConfigReference() *xpv1.Reference {
 	return mg.Spec.ProviderConfigReference
-}
-
-/*
-GetProviderReference of this VPCEndpoint.
-Deprecated: Use GetProviderConfigReference.
-*/
-func (mg *VPCEndpoint) GetProviderReference() *xpv1.Reference {
-	return mg.Spec.ProviderReference
-}
-
-// GetPublishConnectionDetailsTo of this VPCEndpoint.
-func (mg *VPCEndpoint) GetPublishConnectionDetailsTo() *xpv1.PublishConnectionDetailsTo {
-	return mg.Spec.PublishConnectionDetailsTo
 }
 
 // GetWriteConnectionSecretToReference of this VPCEndpoint.
@@ -75,19 +62,6 @@ func (mg *VPCEndpoint) SetManagementPolicies(r xpv1.ManagementPolicies) {
 // SetProviderConfigReference of this VPCEndpoint.
 func (mg *VPCEndpoint) SetProviderConfigReference(r *xpv1.Reference) {
 	mg.Spec.ProviderConfigReference = r
-}
-
-/*
-SetProviderReference of this VPCEndpoint.
-Deprecated: Use SetProviderConfigReference.
-*/
-func (mg *VPCEndpoint) SetProviderReference(r *xpv1.Reference) {
-	mg.Spec.ProviderReference = r
-}
-
-// SetPublishConnectionDetailsTo of this VPCEndpoint.
-func (mg *VPCEndpoint) SetPublishConnectionDetailsTo(r *xpv1.PublishConnectionDetailsTo) {
-	mg.Spec.PublishConnectionDetailsTo = r
 }
 
 // SetWriteConnectionSecretToReference of this VPCEndpoint.

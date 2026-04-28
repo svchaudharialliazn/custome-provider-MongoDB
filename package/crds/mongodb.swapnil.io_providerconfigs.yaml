@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: providerconfigs.mongodb.swapnil.io
 spec:
   group: mongodb.swapnil.io
@@ -18,22 +18,9 @@ spec:
     singular: providerconfig
   scope: Cluster
   versions:
-  - additionalPrinterColumns:
-    - jsonPath: .metadata.creationTimestamp
-      name: AGE
-      type: date
-    - jsonPath: .spec.credentials.aws.secretsManager.secretName
-      name: SECRET-NAME
-      type: string
-    - jsonPath: .spec.credentials.aws.secretsManager.region
-      name: REGION
-      type: string
-    name: v1alpha1
+  - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: |-
-          A ProviderConfig configures the MongoDB provider with AWS-only credential storage
-          ELIMINATES ALL Kubernetes secret references
         properties:
           apiVersion:
             description: |-
@@ -53,52 +40,71 @@ spec:
           metadata:
             type: object
           spec:
-            description: A ProviderConfigSpec defines the desired state of a ProviderConfig.
+            description: ProviderConfigSpec defines the desired state of ProviderConfig.
             properties:
               credentials:
                 description: |-
-                  Credentials required to authenticate with MongoDB Atlas API
-                  Stored ONLY in AWS Secrets Manager - NO Kubernetes secrets
+                  ProviderCredentials holds credentials source details.
+                  Supports both Kubernetes Secrets and AWS Secrets Manager.
                 properties:
                   aws:
-                    description: AWS Secrets Manager source - NO Kubernetes secrets
-                      allowed
+                    description: |-
+                      AWS holds AWS Secrets Manager configuration
+                      Used when Source is "AWS"
                     properties:
                       secretsManager:
-                        description: AWS Secrets Manager configuration for provider
-                          credentials
+                        description: AWSSecretsManagerReference holds configuration
+                          for AWS Secrets Manager storage.
                         properties:
                           kmsKeyId:
-                            description: AWS KMS Key ID for decryption (optional)
                             type: string
                           region:
-                            description: AWS Region where the provider credentials
-                              secret is stored
                             type: string
                           secretKey:
-                            default: apiKey
-                            description: 'Secret key within the JSON secret (default:
-                              "apiKey")'
                             type: string
                           secretName:
-                            description: AWS Secrets Manager secret name or ARN containing
-                              MongoDB Atlas API key
                             type: string
                         required:
                         - region
-                        - secretName
                         type: object
+                    type: object
+                  secretRef:
+                    description: |-
+                      SecretRef references a Kubernetes Secret containing AWS credentials
+                      Used when Source is "Secret"
+                      Example secret format:
+                        apiVersion: v1
+                        kind: Secret
+                        metadata:
+                          name: backupcreds
+                          namespace: crossplane-system
+                        type: Opaque
+                        data:
+                          credentials: <base64-encoded-json>
+                      Where credentials JSON contains:
+                        {
+                          "accessKeyId": "AKIA...",
+                          "secretAccessKey": "...",
+                          "sessionToken": "..."
+                        }
+                    properties:
+                      key:
+                        description: The key to select.
+                        type: string
+                      name:
+                        description: Name of the secret.
+                        type: string
+                      namespace:
+                        description: Namespace of the secret.
+                        type: string
                     required:
-                    - secretsManager
+                    - key
+                    - name
+                    - namespace
                     type: object
                   source:
-                    allOf:
-                    - enum:
-                      - AWS
-                    - enum:
-                      - AWS
-                    description: Source of the provider credentials - only AWS sources
-                      supported
+                    description: Source specifies which credentials source to use
+                      (Secret or AWS)
                     type: string
                 required:
                 - source
@@ -107,7 +113,7 @@ spec:
             - credentials
             type: object
           status:
-            description: A ProviderConfigStatus reflects the observed state of a ProviderConfig.
+            description: ProviderConfigStatus represents the observed state of ProviderConfig.
             properties:
               conditions:
                 description: Conditions of the resource.
@@ -125,6 +131,13 @@ spec:
                         A Message containing details about this condition's last transition from
                         one status to another, if any.
                       type: string
+                    observedGeneration:
+                      description: |-
+                        ObservedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      type: integer
                     reason:
                       description: A Reason for this condition's last transition from
                         one status to another.
@@ -145,6 +158,9 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               users:
                 description: Users of this provider configuration.
                 format: int64
