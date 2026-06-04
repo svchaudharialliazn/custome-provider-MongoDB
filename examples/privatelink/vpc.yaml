@@ -5,7 +5,7 @@ metadata:
 spec:
   forProvider:
     vpcId: vpc-03a75e9d856407da5
-    serviceName: com.amazonaws.vpce.eu-central-1.vpce-svc-05eda7fee5676d6a3
+    serviceName: com.amazonaws.vpce.eu-central-1.vpce-svc-06986237fdec80e4f
     accountId: "198927051560"
     subnetIds:
     - subnet-000ff8403aca2347d

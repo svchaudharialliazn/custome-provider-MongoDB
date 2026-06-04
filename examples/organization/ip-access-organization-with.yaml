@@ -1,7 +1,7 @@
 apiVersion: organization.mongodb.swapnil.io/v1alpha1
 kind: Organization
 metadata:
-  name: swap-v19
+  name: swap-v20
 spec:
   forProvider:
     ownerID: "68933765952cea244d470efb"
@@ -11,7 +11,7 @@ spec:
         - "ORG_OWNER"
     awsSecretsConfig:
       region: "eu-central-1"
-      secretName: "swap-v19"
+      secretName: "swap-v20"
       kmsKeyId: "arn:aws:kms:eu-central-1:198927051560:key/50aed21c-4e38-4e62-9907-f35911304563"
     networkAccessConfig:
       enabled: true
@@ -21,6 +21,7 @@ spec:
         - ip: "165.225.120.93"
         - ip: "167.103.3.4"
         - ip: "167.103.118.82"
+        - ip: "167.103.188.106"
   providerConfigRef:
     name: atlas-provider-aws-only
   deletionPolicy: Delete
