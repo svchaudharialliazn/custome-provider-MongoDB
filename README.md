@@ -115,6 +115,118 @@ spec:
 
 ---
 
+## Installation
+
+### 1. Store MongoDB Atlas credentials in AWS Secrets Manager
+
+```bash
+aws secretsmanager create-secret \
+  --name "product/mongodb/my-credentials" \
+  --region eu-central-1 \
+  --secret-string '{"publicKey":"<YOUR_PUBLIC_KEY>","privateKey":"<YOUR_PRIVATE_KEY>"}'
+```
+
+### 2. Install the provider
+
+Apply the provider package to your Crossplane-enabled cluster:
+
+```yaml
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: swapnil-provider-mongodb
+spec:
+  package: docker.io/svchaudharialliazn/swap-provider-mongodb:v0.1.1
+```
+
+### 3. Configure AWS credentials for the provider pod
+
+```bash
+kubectl apply -f examples/test/runtimeconfig.yaml
+kubectl apply -f examples/test/druntime.yaml
+```
+
+### 4. Create a ProviderConfig
+
+```bash
+kubectl apply -f examples/provider/providerconfig-aws-only.yaml
+```
+
+### 5. Create managed resources
+
+```bash
+# Create an Organization
+kubectl apply -f examples/organization/organization-pure-aws.yaml
+
+# Create a VPC Endpoint
+kubectl apply -f examples/privatelink/example.yml
+```
+
+---
+
+## Developing
+
+### Setup
+
+```bash
+git clone https://github.com/svchaudharialliazn/custome-provider-MongoDB.git
+cd custome-provider-MongoDB
+make vendor
+```
+
+### Code generation
+
+```bash
+make generate      # Regenerate deepcopy, managed resource interfaces
+make manifests     # Regenerate CRD manifests
+```
+
+### Build
+
+```bash
+make build                  # Build provider binary → ./_output/bin/provider
+make build-all              # Build for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64
+make docker-build           # Build single-arch Docker image
+make docker-build-multiarch # Build multi-arch image
+```
+
+### Test
+
+```bash
+make test           # Run unit tests
+make test-coverage  # Run tests with coverage report
+make lint           # Run golangci-lint
+make fmt            # Format code with goimports
+make vet            # Run go vet
+make reviewable     # vendor + generate + lint + test (full pre-PR check)
+```
+
+### Local development with KinD
+
+```bash
+make dev-kind-create        # Create a local KinD cluster
+make dev-install-crossplane # Install Crossplane via Helm
+make dev-deploy             # Deploy provider to KinD cluster
+make dev-run                # Run provider locally with debug logging
+```
+
+### Full release build
+
+```bash
+make release   # reviewable + build.xpkg + docker-build-multiarch + push.xpkg
+```
+
+---
+
+## Docker Images
+
+| Image | Registry |
+|---|---|
+| Provider controller | `docker.io/svchaudharialliazn/swap-provider-mongodb-controller:v0.1.0` |
+| Crossplane package | `docker.io/svchaudharialliazn/swap-provider-mongodb:v0.1.1` |
+
+---
+
 ## Project Structure
 
 ```
